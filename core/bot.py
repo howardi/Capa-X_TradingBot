@@ -71,18 +71,6 @@ class TradingBot:
         self.load_positions()
         
         # Initialize Strategies
-        
-    @property
-    def open_positions(self):
-        """Return the list of positions for the active trading mode"""
-        return self.positions.get(self.trading_mode, [])
-    
-    @open_positions.setter
-    def open_positions(self, value):
-        """Set positions (mostly for initialization or clearing)"""
-        self.positions[self.trading_mode] = value
-        
-        # Initialize Strategies
         self.strategies = {
             "Smart Trend": SmartTrendStrategy(self),
             "Sniper Mode": SniperStrategy(self),
@@ -99,6 +87,16 @@ class TradingBot:
         
         # Initialize Profit Optimizer (Contextual Multi-Armed Bandit)
         self.profit_optimizer = ProfitOptimizer(list(self.strategies.keys()))
+        
+    @property
+    def open_positions(self):
+        """Return the list of positions for the active trading mode"""
+        return self.positions.get(self.trading_mode, [])
+    
+    @open_positions.setter
+    def open_positions(self, value):
+        """Set positions (mostly for initialization or clearing)"""
+        self.positions[self.trading_mode] = value
 
     def load_positions(self):
         """Load active positions from file to persist state across restarts"""
