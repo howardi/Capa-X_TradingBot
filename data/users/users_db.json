@@ -1,0 +1,28 @@
+{
+    "pnl_tester": {
+        "email": "test@example.com",
+        "salt": "958c8b790cf6c21f430a5573cff5b89d",
+        "password_hash": "cb7985736d2c8f5d83db27d7ad2777587409c972e92114c0a8230bdbcdc76745",
+        "role": "demo",
+        "created_at": "2025-12-28 16:09:30.199759",
+        "last_login": null,
+        "settings": {
+            "theme": "dark",
+            "notifications_enabled": true
+        }
+    },
+    "howardino": {
+        "email": "wakzclin@gmail.com",
+        "salt": "b93175750a5fcaffef3e58f7a759ab0d",
+        "password_hash": "45abe7a0af9009e9061f6f148858f703a14f92d40794bf5bfc9d9fb6a56abbca",
+        "role": "demo",
+        "2fa_enabled": false,
+        "2fa_secret": null,
+        "created_at": "2025-12-28 17:19:50.486910",
+        "last_login": "2025-12-29 15:02:26.775706",
+        "settings": {
+            "theme": "dark",
+            "notifications_enabled": true
+        }
+    }
+}

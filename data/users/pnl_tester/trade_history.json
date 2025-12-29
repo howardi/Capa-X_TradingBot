@@ -1,0 +1,24 @@
+[
+    {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "amount": 1.0,
+        "price": 50000.0,
+        "cost": 50000.0,
+        "fee": 0.0,
+        "pnl": 0.0,
+        "timestamp": "2025-12-28 16:09:30.236634",
+        "avg_entry_price": 50000.0
+    },
+    {
+        "symbol": "BTC/USDT",
+        "side": "sell",
+        "amount": 0.5,
+        "price": 55000.0,
+        "cost": 27500.0,
+        "fee": 0.0,
+        "pnl": 2500.0,
+        "timestamp": "2025-12-28 16:09:30.293942",
+        "avg_entry_price": 0.0
+    }
+]

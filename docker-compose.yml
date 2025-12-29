@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  bot-dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  celery-worker:
+    build: .
+    command: celery -A core.tasks worker --loglevel=info
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - .:/app

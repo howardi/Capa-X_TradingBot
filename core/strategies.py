@@ -1,0 +1,698 @@
+
+import pandas as pd
+from core.models import Signal
+
+class Strategy:
+    """Base Strategy Interface"""
+    def __init__(self, bot):
+        self.bot = bot
+        self.name = "Base Strategy"
+
+    def execute(self, symbol, data=None):
+        """Execute strategy logic and return a Signal object"""
+        raise NotImplementedError
+
+    def apply_risk_management(self, decision_packet, df=None):
+        """
+        Enrich decision packet with dynamic SL/TP and Position Sizing.
+        """
+        # Ensure ATR exists
+        atr = 0.0
+        
+        if df is not None and not df.empty:
+            if 'atr' not in df.columns:
+                # Simple ATR calculation if missing
+                high_low = df['high'] - df['low']
+                high_close = (df['high'] - df['close'].shift()).abs()
+                low_close = (df['low'] - df['close'].shift()).abs()
+                ranges = pd.concat([high_low, high_close, low_close], axis=1)
+                true_range = ranges.max(axis=1)
+                atr = true_range.rolling(14).mean().iloc[-1]
+            else:
+                atr = df['atr'].iloc[-1]
+
+        # Handle NaN ATR or missing DF
+        if pd.isna(atr) or atr == 0:
+            price = decision_packet.get('entry', 0)
+            if price > 0:
+                atr = price * 0.01 # Fallback to 1% of price
+
+        entry_price = decision_packet['entry']
+        bias = decision_packet['bias']
+
+        # 1. Dynamic Stops (if not already set or zero)
+        if decision_packet.get('stop_loss', 0) == 0:
+            stops = self.bot.risk_manager.calculate_dynamic_stops(entry_price, atr, bias)
+            decision_packet['stop_loss'] = stops['stop_loss']
+            decision_packet['take_profit'] = stops['take_profit']
+        
+        # 2. Position Sizing
+        sl_price = decision_packet['stop_loss']
+        regime = decision_packet.get('market_regime', 'Normal')
+        risk_calc = self.bot.risk_manager.calculate_risk_size(atr, entry_price, sl_price, regime=regime)
+        
+        decision_packet['position_size'] = risk_calc['position_size']
+        decision_packet['risk_amount'] = risk_calc['risk_amount']
+        # Update risk_percent if calculated differently
+        if 'risk_pct' in risk_calc:
+             decision_packet['risk_percent'] = risk_calc['risk_pct'] * 100 
+        
+        return decision_packet
+
+class SmartTrendStrategy(Strategy):
+    """
+    The 'Elite' Capa-X Smart Trend Strategy.
+    Combines Multi-Timeframe Analysis, Market Regime, Liquidity, and Risk Management.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Smart Trend"
+
+    def execute(self, symbol, data=None):
+        # 1. Fetch Core Data
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=200)
+        if df.empty:
+            return None
+            
+        # 2. Technical Analysis
+        df = self.bot.analyzer.calculate_indicators(df)
+        signal_data = self.bot.analyzer.get_signal(df)
+        
+        # 3. Market Regime
+        regime_data = self.bot.brain.detect_market_regime(df)
+        
+        # 4. Construct Signal
+        if signal_data['type'] in ['buy', 'sell']:
+             decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': signal_data.get('score', 0)/10,
+                'market_regime': regime_data['type'],
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_data['type'].upper(),
+                "strategy": self.name,
+                "entry": df['close'].iloc[-1],
+                "stop_loss": 0, # Should be calculated by risk manager
+                "take_profit": 0,
+                "risk_percent": 1.0,
+                "execution_score": 1.0
+             }
+             
+             # Apply Risk Management
+             decision_packet = self.apply_risk_management(decision_packet, df)
+
+             self.bot.log_trade(decision_packet)
+             
+             return Signal(
+                symbol=symbol,
+                type=signal_data['type'],
+                price=df['close'].iloc[-1],
+                timestamp=pd.Timestamp.now(),
+                reason=signal_data['reason'],
+                indicators=signal_data['indicators'],
+                score=signal_data.get('score', 0),
+                regime=regime_data['type'],
+                liquidity_status='Normal',
+                confidence=decision_packet['confidence'],
+                decision_details=decision_packet
+             )
+        return None
+
+class GridTradingStrategy(Strategy):
+    """
+    Grid Trading Strategy.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Grid Trading"
+
+    def execute(self, symbol, data=None):
+        # Simple placeholder for grid logic or rely on bot to handle grid orders
+        return None
+
+class MeanReversionStrategy(Strategy):
+    """
+    Mean Reversion Strategy.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Mean Reversion"
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=100)
+        if df.empty: return None
+        
+        df = self.bot.analyzer.calculate_indicators(df)
+        row = df.iloc[-1]
+        
+        if 'ema_50' not in row or pd.isna(row['ema_50']):
+             return None
+             
+        ema_50 = row['ema_50']
+        dist_pct = (row['close'] - ema_50) / ema_50
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        if dist_pct < -0.02 and row.get('rsi', 50) < 30:
+            signal_type = 'buy'
+            reason = "Oversold Reversion"
+            confidence = 0.85
+        elif dist_pct > 0.02 and row.get('rsi', 50) > 70:
+            signal_type = 'sell'
+            reason = "Overbought Reversion"
+            confidence = 0.85
+            
+        if signal_type != 'hold':
+             decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Reversion',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": row['close'],
+                "stop_loss": 0,
+                "take_profit": 0,
+                "risk_percent": 1.0,
+                "execution_score": 1.0
+             }
+             
+             # Apply Risk Management
+             decision_packet = self.apply_risk_management(decision_packet, df)
+
+             self.bot.log_trade(decision_packet)
+             
+             return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=row['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'rsi': row.get('rsi')},
+                score=8.5,
+                regime='Reversion',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+             )
+        return None
+
+class FundingArbitrageStrategy(Strategy):
+    """
+    Funding Arbitrage Strategy.
+    Exploits high positive funding rates by shorting perps and holding spot (Delta Neutral).
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Funding Arbitrage"
+
+    def execute(self, symbol, data=None):
+        # Fetch current funding rate
+        ticker = self.bot.data_manager.fetch_ticker(symbol)
+        funding_rate = ticker.get('fundingRate', 0)
+        
+        # Annualized funding rate
+        apr = funding_rate * 3 * 365 * 100 
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Threshold: > 20% APR
+        if apr > 20.0:
+            signal_type = 'sell' # Short perp to collect funding
+            reason = f"High Funding Rate ({apr:.2f}% APR)"
+            confidence = 0.9
+        
+        if signal_type != 'hold':
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'High Funding',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": ticker['last'],
+                "stop_loss": 0, # Delta Neutral, no stop needed usually (or wide stop)
+                "take_profit": 0,
+                "risk_percent": 5.0, # Safe arbitrage allowing larger size
+                "execution_score": 1.0
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df=None)
+
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=ticker['last'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'funding_apr': apr},
+                score=9.0,
+                regime='High Funding',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+        return None
+
+class BasisTradeStrategy(Strategy):
+    """
+    Futures Basis Strategy.
+    Exploits the premium of Futures over Spot (Contango).
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Basis Trade"
+
+    def execute(self, symbol, data=None):
+        # Requires Spot and Future tickers
+        # Assuming symbol is perp, we need to construct spot/quarterly symbols
+        # This is a simplification
+        spot_price = self.bot.data_manager.fetch_ticker(symbol)['last']
+        future_price = spot_price * 1.02 # Simulating 2% premium
+        
+        basis = (future_price - spot_price) / spot_price
+        annualized_basis = basis * (365/90) * 100 # Assuming 90 days to expiry
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        if annualized_basis > 15.0:
+            signal_type = 'sell' # Short Future
+            reason = f"High Basis Premium ({annualized_basis:.2f}% APR)"
+            confidence = 0.85
+            
+        if signal_type != 'hold':
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Contango',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": future_price,
+                "stop_loss": 0,
+                "take_profit": 0,
+                "risk_percent": 5.0,
+                "execution_score": 1.0
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df=None)
+
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=future_price,
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'basis_apr': annualized_basis},
+                score=8.5,
+                regime='Contango',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+        return None
+
+class SwingRangeStrategy(Strategy):
+    """
+    Swing Range Strategy.
+    Trades the range boundaries in a sideways market.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Swing Range"
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=100)
+        if df.empty: return None
+
+        # 1. Determine Range
+        # Use recent High/Low pivot points over last N candles
+        window = 20
+        recent_high = df['high'].rolling(window=window).max().iloc[-1]
+        recent_low = df['low'].rolling(window=window).min().iloc[-1]
+        current_price = df['close'].iloc[-1]
+        
+        # 2. Check Regime
+        # Only trade if ADX < 25 (Ranging)
+        if 'adx' not in df.columns:
+            df = self.bot.analyzer.calculate_indicators(df)
+            
+        if df['adx'].iloc[-1] > 25:
+            return None # Trending, skip range strategy
+
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # 3. Decision Logic
+        # Sell near High
+        if current_price >= recent_high * 0.995:
+            signal_type = 'sell'
+            reason = "Range High Rejection"
+            confidence = 0.8
+            
+        # Buy near Low
+        elif current_price <= recent_low * 1.005:
+            signal_type = 'buy'
+            reason = "Range Low Bounce"
+            confidence = 0.8
+            
+        if signal_type != 'hold':
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Ranging',
+                'rejection_reason': ''
+            }
+            
+            self.bot.last_trade_time = pd.Timestamp.now()
+            
+            # Stops just outside range
+            sl = recent_low * 0.99 if signal_type == 'buy' else recent_high * 1.01
+            tp = recent_high * 0.99 if signal_type == 'buy' else recent_low * 1.01
+            
+            decision_packet.update({
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": current_price,
+                "stop_loss": sl,
+                "take_profit": tp,
+                "risk_percent": 1.0,
+                "execution_score": 1.0
+            })
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=current_price,
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'adx': df['adx'].iloc[-1]},
+                score=8.0,
+                regime='Ranging',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+        return None
+
+class LiquiditySweepStrategy(Strategy):
+    """
+    Liquidity Sweep Strategy.
+    Identifies stop runs (sweeps) of key levels followed by a reversal.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Liquidity Sweep"
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=100)
+        if df.empty: return None
+
+        # Identify Key Swing Points (Fractals)
+        window = 5
+        df['swing_high'] = df['high'].rolling(window=window*2+1, center=True).max()
+        df['swing_low'] = df['low'].rolling(window=window*2+1, center=True).min()
+        
+        # Find the most recent confirmed swing points (excluding current candle context for lookback)
+        last_swing_high = df['swing_high'].dropna().iloc[-1] if not df['swing_high'].dropna().empty else df['high'].max()
+        last_swing_low = df['swing_low'].dropna().iloc[-1] if not df['swing_low'].dropna().empty else df['low'].min()
+        
+        current = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Bullish Sweep: Price broke below last swing low but closed above it
+        if current['low'] < last_swing_low and current['close'] > last_swing_low:
+            signal_type = 'buy'
+            reason = "Liquidity Sweep of Low"
+            confidence = 0.85
+            
+        # Bearish Sweep: Price broke above last swing high but closed below it
+        elif current['high'] > last_swing_high and current['close'] < last_swing_high:
+            signal_type = 'sell'
+            reason = "Liquidity Sweep of High"
+            confidence = 0.85
+            
+        if signal_type != 'hold':
+            sl = current['low'] * 0.998 if signal_type == 'buy' else current['high'] * 1.002
+            tp = last_swing_high if signal_type == 'buy' else last_swing_low
+            
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Reversal',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": current['close'],
+                "stop_loss": sl,
+                "take_profit": tp,
+                "risk_percent": 1.5, # Slightly higher risk for high probability setup
+                "execution_score": 1.0
+            }
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=current['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'swing_high': last_swing_high, 'swing_low': last_swing_low},
+                score=9.0,
+                regime='Reversal',
+                liquidity_status='Swept',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+        return None
+
+class OrderFlowStrategy(Strategy):
+    """
+    Order Flow Strategy.
+    Uses Volume and Price Action to detect absorption and aggression.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Order Flow"
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=50)
+        if df.empty: return None
+
+        # Calculate Volume Moving Average
+        vol_ma = df['volume'].rolling(20).mean().iloc[-1]
+        current_vol = df['volume'].iloc[-1]
+        
+        # Detect High Volume (Absorption or Breakout)
+        is_high_volume = current_vol > (vol_ma * 2.0)
+        
+        current_candle = df.iloc[-1]
+        body_size = abs(current_candle['close'] - current_candle['open'])
+        total_range = current_candle['high'] - current_candle['low']
+        
+        if total_range == 0: return None
+        
+        body_pct = body_size / total_range
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Scenario 1: Absorption (High Volume, Small Body, Long Wick)
+        if is_high_volume and body_pct < 0.3:
+            # Hammer / Shooting Star Logic
+            upper_wick = current_candle['high'] - max(current_candle['open'], current_candle['close'])
+            lower_wick = min(current_candle['open'], current_candle['close']) - current_candle['low']
+            
+            if lower_wick > upper_wick * 2: # Bullish Absorption
+                signal_type = 'buy'
+                reason = "Bullish Absorption (High Vol Hammer)"
+                confidence = 0.75
+            elif upper_wick > lower_wick * 2: # Bearish Absorption
+                signal_type = 'sell'
+                reason = "Bearish Absorption (High Vol Shooting Star)"
+                confidence = 0.75
+                
+        # Scenario 2: Aggressive Breakout (High Volume, Large Body)
+        elif is_high_volume and body_pct > 0.8:
+            if current_candle['close'] > current_candle['open']:
+                signal_type = 'buy'
+                reason = "Aggressive Buying (High Vol Breakout)"
+                confidence = 0.8
+            else:
+                signal_type = 'sell'
+                reason = "Aggressive Selling (High Vol Breakdown)"
+                confidence = 0.8
+
+        if signal_type != 'hold':
+            sl = current_candle['low'] * 0.995 if signal_type == 'buy' else current_candle['high'] * 1.005
+            # 1.5R Target
+            risk = abs(current_candle['close'] - sl)
+            tp = current_candle['close'] + (risk * 1.5) if signal_type == 'buy' else current_candle['close'] - (risk * 1.5)
+
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Volatile',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": current_candle['close'],
+                "stop_loss": sl,
+                "take_profit": tp,
+                "risk_percent": 1.0,
+                "execution_score": 1.0
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df)
+
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=current_candle['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'volume_ma': vol_ma},
+                score=8.0,
+                regime='Volatile',
+                liquidity_status='High',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+        return None
+
+class SniperStrategy(Strategy):
+    """
+    Sniper Strategy: The 'Number 1' Strategy.
+    High precision, AI-confirmed, Confluence-based entries.
+    Targeting > 90% Win Rate setups.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Sniper Mode"
+
+    def execute(self, symbol, data=None):
+        # 1. Fetch & Prepare Data
+        if data is None:
+             df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=200)
+             if df.empty: return None
+             # Compute Features for AI
+             df = self.bot.feature_store.compute_features(df)
+        else:
+             df = data
+
+        if df.empty: return None
+        
+        row = df.iloc[-1]
+        
+        # 2. Strict Confluence Checks
+        # Requirement 1: Trend is Strong (ADX > 25)
+        if 'adx' not in row or row['adx'] < 25:
+            return None
+            
+        # Requirement 2: Momentum (MACD)
+        # Check if MACD line > Signal line (Bullish) or vice versa
+        if 'macd' not in row: return None # Should be there from feature store
+        
+        # We need previous row for crossover check
+        prev_row = df.iloc[-2]
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Bullish Sniper Setup
+        # 1. MACD Bullish Crossover (recent) or Expansion
+        # 2. Price > EMA 50 > EMA 200 (Uptrend)
+        # 3. RSI not overbought (< 70)
+        # 4. AI Confirmation > 0.3
+        
+        is_uptrend = row['close'] > row['ema_50'] > row['ema_200']
+        is_downtrend = row['close'] < row['ema_50'] < row['ema_200']
+        
+        # AI Prediction
+        ai_score = self.bot.brain.get_ai_prediction(df)
+        
+        if is_uptrend and row['rsi'] < 75:
+            # Check for recent MACD cross or strong momentum
+            if row['macd'] > row['macd_signal'] and row['macd'] > 0:
+                 if ai_score > 0.2: # AI Agrees
+                     signal_type = 'buy'
+                     reason = "Sniper Buy (Trend + MACD + AI)"
+                     confidence = 0.9 + (ai_score * 0.1) # Boost confidence
+        
+        elif is_downtrend and row['rsi'] > 25:
+            if row['macd'] < row['macd_signal'] and row['macd'] < 0:
+                 if ai_score < -0.2: # AI Agrees
+                     signal_type = 'sell'
+                     reason = "Sniper Sell (Trend + MACD + AI)"
+                     confidence = 0.9 + (abs(ai_score) * 0.1)
+
+        if signal_type != 'hold':
+            # Dynamic Tight Stops for High R:R
+            atr = row['atr']
+            sl = row['close'] - (atr * 1.5) if signal_type == 'buy' else row['close'] + (atr * 1.5)
+            tp = row['close'] + (atr * 4.5) if signal_type == 'buy' else row['close'] - (atr * 4.5) # 1:3 R:R
+            
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Trending',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": row['close'],
+                "stop_loss": sl,
+                "take_profit": tp,
+                "risk_percent": 2.0, # Higher risk for Sniper setups
+                "execution_score": 1.0
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df)
+
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=row['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'ai_score': ai_score, 'adx': row['adx']},
+                score=9.5, # Highest Score
+                regime='Trending',
+                liquidity_status='High',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+            
+        return None

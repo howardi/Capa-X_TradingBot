@@ -1,0 +1,34 @@
+[
+    {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "amount": 5.0,
+        "entryPrice": 87749.9765625,
+        "timestamp": "2025-12-28 17:43:23.811949",
+        "status": "open"
+    },
+    {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "amount": 5.0,
+        "entryPrice": 87751.484375,
+        "timestamp": "2025-12-28 18:43:37.849396",
+        "status": "open"
+    },
+    {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "amount": 5.0,
+        "entryPrice": 87752.546875,
+        "timestamp": "2025-12-28 18:49:52.121449",
+        "status": "open"
+    },
+    {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "amount": 10.0,
+        "entryPrice": 87738.859375,
+        "timestamp": "2025-12-28 18:55:11.981433",
+        "status": "open"
+    }
+]
