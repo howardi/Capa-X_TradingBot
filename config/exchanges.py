@@ -9,17 +9,26 @@ load_dotenv()
 
 EXCHANGES = {
     'bybit': {
-        'apiKey': 'jzVVX4fUBWMzfJgDvJ',
-        'secret': 'et0qHWE2KaSggw6qXylmhwpnUHiITzj4ylHh',
+        'apiKey': os.getenv('BYBIT_API_KEY', ''),
+        'secret': os.getenv('BYBIT_SECRET', ''),
+        'urls': {
+            'api': {
+                'public': 'https://api.bytick.com',
+                'private': 'https://api.bytick.com',
+            }
+        },
         'options': {
             'defaultType': 'swap',  # Derivatives/Perpetuals
             'adjustForTimeDifference': True,
-        }
+            'recvWindow': 20000, # Increased to handle time drift
+        },
+        'enableRateLimit': True,
     },
     'binance': {
         'apiKey': os.getenv('BINANCE_API_KEY', ''),
         'secret': os.getenv('BINANCE_SECRET', ''),
-        'options': {'defaultType': 'spot'}
+        'options': {'defaultType': 'spot'},
+        'enableRateLimit': True,
     },
     'kraken': {
         'apiKey': os.getenv('KRAKEN_API_KEY', ''),

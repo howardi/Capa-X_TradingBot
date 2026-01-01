@@ -1,4 +1,37 @@
 {
+    "Demo": [
+        {
+            "symbol": "BTC/USDT",
+            "type": "SELL",
+            "entry": 87725.8046875,
+            "stop_loss": 88014.20728725988,
+            "take_profit": 87148.99948798024,
+            "strategy": "Smart Trend",
+            "position_size": 62310.999314068555
+        },
+        {
+            "symbol": "BTC/USDT",
+            "type": "SELL",
+            "entry": 87725.8046875,
+            "stop_loss": 88014.20728725988,
+            "take_profit": 87148.99948798024,
+            "strategy": "Smart Trend",
+            "position_size": 62310.999314068555
+        }
+    ],
+    "CEX_Direct": [
+        {
+            "symbol": "BTC/USDT",
+            "type": "SELL",
+            "entry": 87886.62,
+            "stop_loss": 88226.63330989369,
+            "take_profit": 87206.59338021261,
+            "strategy": "Smart Trend",
+            "position_size": 0.0
+        }
+    ],
+    "CEX_Proxy": [],
+    "DEX": [],
     "Live": [],
     "Simulation": []
 }

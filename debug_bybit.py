@@ -18,8 +18,18 @@ def debug_bybit_connection():
         print("\n0. Testing Connectivity...")
         socket.gethostbyname("google.com")
         print("✅ Google.com is reachable")
-        socket.gethostbyname("api.bybit.com")
-        print("✅ api.bybit.com is reachable")
+        
+        # Check hostname from config or default
+        api_host = "api.bybit.com"
+        if 'urls' in config and 'api' in config['urls']:
+            # Extract host from URL
+            from urllib.parse import urlparse
+            api_url = config['urls']['api'].get('public', 'https://api.bybit.com')
+            api_host = urlparse(api_url).hostname
+            
+        print(f"Checking {api_host}...")
+        socket.gethostbyname(api_host)
+        print(f"✅ {api_host} is reachable")
     except socket.gaierror as e:
         print(f"❌ DNS Resolution Failed: {e}")
         print("⚠️ ACTION REQUIRED: You might be in a restricted region or have DNS issues.")

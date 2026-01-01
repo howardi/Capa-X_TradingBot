@@ -23,6 +23,8 @@ class AdaptiveRiskManager:
         # New Constraints
         self.open_positions = []
         self.is_kill_switch_active = False
+        self.max_dd = TRADING_CONFIG['risk']['kill_switch_drawdown'] # From config
+        self.dd_triggered = False
 
     @property
     def current_capital(self):
@@ -82,7 +84,7 @@ class AdaptiveRiskManager:
         # Future: Add Correlation Check here
         return True, "Allowed"
 
-    def configure(self, risk_per_trade=None, stop_loss_pct=None, take_profit_pct=None):
+    def configure(self, risk_per_trade=None, stop_loss_pct=None, take_profit_pct=None, stop_atr_mult=None, tp_atr_mult=None):
         """
         Update risk parameters from UI/Settings.
         """
@@ -92,9 +94,16 @@ class AdaptiveRiskManager:
         if stop_loss_pct is not None:
             # If user sets a specific %, we switch to fixed mode
             self.stop_loss_config = {'mode': 'fixed', 'value': stop_loss_pct / 100.0}
-            
+        
+        if stop_atr_mult is not None:
+            # Switch to ATR mode with custom multiplier
+            self.stop_loss_config = {'mode': 'atr', 'value': float(stop_atr_mult)}
+
         if take_profit_pct is not None:
             self.take_profit_config = {'mode': 'fixed', 'value': take_profit_pct / 100.0}
+            
+        if tp_atr_mult is not None:
+            self.take_profit_config = {'mode': 'atr', 'value': float(tp_atr_mult)}
 
     def update_metrics(self, current_balance=None, last_trade_result=None, pnl_amount=0.0, capital_released=0.0):
         """Update metrics for the active mode with PnL amount"""
@@ -123,11 +132,54 @@ class AdaptiveRiskManager:
 
         # Streak Calc
         if last_trade_result == 'win':
-            self.win_streak += 1
-            self.loss_streak = 0
+            self.metrics[self.mode]['win_streak'] = self.metrics[self.mode].get('win_streak', 0) + 1
+            self.metrics[self.mode]['loss_streak'] = 0
         elif last_trade_result == 'loss':
-            self.loss_streak += 1
-            self.win_streak = 0
+            self.metrics[self.mode]['loss_streak'] = self.metrics[self.mode].get('loss_streak', 0) + 1
+            self.metrics[self.mode]['win_streak'] = 0
+
+    def check_circuit_breakers(self, equity_start, equity_now):
+        """
+        Check if circuit breaker should trigger based on drawdown.
+        Matches CapaXBot requirements.
+        """
+        if equity_start == 0: return True
+        dd = 1 - (equity_now / equity_start)
+        
+        # Update internal metrics
+        self.metrics[self.mode]['max_drawdown'] = max(self.metrics[self.mode]['max_drawdown'], dd)
+        
+        if dd >= self.max_dd:
+            self.dd_triggered = True
+            self.is_kill_switch_active = True
+            
+        return not self.dd_triggered
+
+    def position_size(self, price, atr):
+        """
+        Calculate position size and stop distance.
+        Matches CapaXBot requirements.
+        """
+        # Reuse existing logic but return tuple (qty, stop_distance)
+        sl_data = self.calculate_dynamic_stops(price, atr, 'buy') # Side doesn't matter for distance
+        stop_distance = abs(price - sl_data['stop_loss'])
+        
+        # If stop distance is 0 or tiny, prevent division by zero
+        if stop_distance < 1e-8:
+            return 0.0, stop_distance
+            
+        risk_calc = self.calculate_risk_size(atr, price, sl_data['stop_loss'])
+        qty = risk_calc.get('position_size', 0.0)
+        
+        return qty, stop_distance
+
+    def stop_take_levels(self, side, price, atr):
+        """
+        Get SL/TP levels.
+        Matches CapaXBot requirements.
+        """
+        levels = self.calculate_dynamic_stops(price, atr, side)
+        return levels['stop_loss'], levels['take_profit']
 
     def calculate_risk_size(self, volatility_atr, entry_price, stop_loss_price, regime="Normal"):
         """
@@ -184,8 +236,16 @@ class AdaptiveRiskManager:
         Calculate safe Stop Loss and Take Profit levels based on volatility (ATR).
         Optimized for 1:2 or 1:3 Risk/Reward ratio.
         """
-        multiplier_sl = 1.5 # Tighter stop for "Risk Free" approach (cut losers fast)
-        multiplier_tp = 3.0 # Aim for 1:2 ratio minimum
+        # Default multipliers
+        multiplier_sl = 1.5 
+        multiplier_tp = 3.0
+        
+        # Use configured values if in ATR mode
+        if self.stop_loss_config.get('mode') == 'atr':
+            multiplier_sl = self.stop_loss_config.get('value', 1.5)
+            
+        if self.take_profit_config.get('mode') == 'atr':
+            multiplier_tp = self.take_profit_config.get('value', 3.0)
         
         if side.lower() == 'buy':
             sl = entry_price - (atr * multiplier_sl)

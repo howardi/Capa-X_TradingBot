@@ -1,29 +1,22 @@
 
 import streamlit as st
-import pandas as pd
-import numpy as np
-import pandas_ta as ta
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+# Apply DNS Fix immediately
+import core.dns_fix
 import time
-from core.bot import TradingBot
-from core.copy_trading import CopyTradingModule
-from core.auth import AuthManager, UserManager, TOTP, SessionManager
-from core.nlp_engine import NLPEngine
-from core.sound_engine import SoundEngine
-from core.trade_replay import TradeReplay
-from core.chaos import ChaosMonkey
-from core.transparency import TransparencyLog, OracleManager
-from config.settings import APP_NAME, VERSION, DEFAULT_SYMBOL
-from config.trading_config import TRADING_CONFIG
-import json
+import sys
 import os
+
+import core.auth
+from core.auth import AuthManager, UserManager, TOTP, SessionManager
+from config.settings import APP_NAME, VERSION, DEFAULT_SYMBOL
 
 # st.set_page_config(page_title=APP_NAME, layout="wide")
 
 # Initialize Auth
-if 'auth_manager' not in st.session_state:
+# Explicitly force re-initialization if the class definition changed (detected via missing method)
+if 'auth_manager' not in st.session_state or not hasattr(st.session_state.auth_manager, 'get_api_keys'):
     st.session_state.auth_manager = AuthManager()
+
 if 'session_manager' not in st.session_state:
     st.session_state.session_manager = SessionManager()
 
@@ -47,6 +40,9 @@ if st.session_state.get('logged_in'):
         st.session_state.logged_in = False
         st.session_state.username = None
         st.query_params["logout"] = "timeout"
+        if "session_id" in st.query_params:
+            del st.query_params["session_id"]
+            
         # Clear local storage via JS injection
         st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
         st.rerun()
@@ -85,10 +81,13 @@ if not st.session_state.logged_in and session_id:
         st.session_state.last_active = time.time() # Initialize activity
         st.success(f"Welcome back, {username}!")
         # Clean URL
-        st.query_params.clear()
+        # st.query_params.clear()
     else:
         st.error("Session expired or invalid.")
-        st.query_params.clear()
+        if "session_id" in st.query_params:
+            del st.query_params["session_id"]
+        # Clear invalid token from storage to prevent reload loops
+        st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
 
 # Inject Persistence Script (Only if NOT logged in and NO session_id in URL)
 if not st.session_state.logged_in and not session_id and not logout_reason:
@@ -103,13 +102,7 @@ if not st.session_state.logged_in and not session_id and not logout_reason:
 
 # Initialize NLP (Moved to after bot initialization)
 
-# Initialize Sound Engine
-if 'sound_engine' not in st.session_state:
-    st.session_state.sound_engine = SoundEngine()
 
-# Initialize Trade Replay
-if 'trade_replay' not in st.session_state:
-    st.session_state.trade_replay = TradeReplay()
 
 if 'sound_queue' not in st.session_state:
     st.session_state.sound_queue = []
@@ -127,9 +120,50 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- Helper Functions ---
-@st.cache_resource
 def get_bot(exchange_id):
-    return TradingBot(exchange_id)
+    """Get or create bot instance for the current session (Avoids global cache collision)"""
+    # Use session version key to force reload of bot instance when core modules update
+    session_key = f"bot_{exchange_id}_{SESSION_VERSION_KEY}"
+    if session_key not in st.session_state:
+        st.session_state[session_key] = TradingBot(exchange_id)
+        # Restore wallet balances from session cache if available
+        cache_key = f"wallet_cache_{exchange_id}_v10"
+        if cache_key in st.session_state:
+            st.session_state[session_key].wallet_balances = st.session_state[cache_key]
+        
+    bot = st.session_state[session_key]
+    
+    # SAFETY PATCH: Ensure wallet_balances attribute exists
+    if not hasattr(bot, 'wallet_balances'):
+        bot.wallet_balances = []
+
+    # PERSISTENCE FIX: Auto-inject credentials from AuthManager if missing
+    # This fixes "Auto-sync failed" on page refresh
+    try:
+        if st.session_state.get('logged_in') and 'auth_manager' in st.session_state:
+            # Check if bot has credentials
+            has_creds = False
+            if hasattr(bot.data_manager, 'exchange') and bot.data_manager.exchange:
+                if bot.data_manager.exchange.apiKey and bot.data_manager.exchange.secret:
+                    has_creds = True
+            
+            if not has_creds:
+                username = st.session_state.get('username')
+                if username:
+                    key, secret = st.session_state.auth_manager.get_api_keys(username, exchange_id)
+                    if key and secret:
+                        # Inject without triggering a full update/connect sequence if just ensuring presence
+                        # But update_credentials handles the connection logic, so use it.
+                        print(f"Auto-injecting credentials for {exchange_id}...")
+                        bot.data_manager.update_credentials(key, secret)
+                        bot.trading_mode = 'CEX_Direct'
+                        # Ensure connection state
+                        st.session_state[f"{exchange_id}_connected"] = True
+                        st.session_state.exchange_connected = True
+    except Exception as e:
+        print(f"Failed to auto-inject credentials: {e}")
+        
+    return bot
 
 @st.cache_data(ttl=600)
 def get_cached_fundamentals(symbol, _bot):
@@ -139,7 +173,7 @@ def get_cached_fundamentals(symbol, _bot):
 def get_cached_sentiment(_bot):
     return _bot.fundamentals.get_market_sentiment()
 
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=10)
 def get_cached_ohlcv(_bot, symbol, timeframe):
     return _bot.data_manager.fetch_ohlcv(symbol, timeframe, limit=200)
 
@@ -213,7 +247,7 @@ if not st.session_state.logged_in:
                 with st.form("login_form"):
                     username = st.text_input("Username", key="login_user")
                     password = st.text_input("Password", type="password", key="login_pass")
-                    remember_me = st.checkbox("Remember Me")
+                    remember_me = st.checkbox("Remember Me", value=True)
                     submitted = st.form_submit_button("Login", type="primary")
                 
                 if submitted:
@@ -240,6 +274,9 @@ if not st.session_state.logged_in:
                                     # Create Session
                                     token = st.session_state.session_manager.create_session(username, remember_me)
                                     st.session_state.session_token = token
+                                    
+                                    # Update URL for immediate persistence on refresh
+                                    st.query_params["session_id"] = token
                                     
                                     # Inject JS to save token
                                     st.markdown(f"""
@@ -299,6 +336,9 @@ if not st.session_state.logged_in:
                         token = st.session_state.session_manager.create_session(username, remember_me)
                         st.session_state.session_token = token
                         
+                        # Update URL for immediate persistence on refresh
+                        st.query_params["session_id"] = token
+                        
                         st.markdown(f"""
                             <script>
                                 localStorage.setItem('caparox_session', '{token}');
@@ -323,12 +363,67 @@ if not st.session_state.logged_in:
 
 # --- Main Dashboard (Only reachable if logged in) ---
 
+# --- Fast Load: Post-Login Imports ---
+import pandas as pd
+import numpy as np
+# Imports moved to specific pages for faster load
+# import plotly.graph_objects as go
+# from plotly.subplots import make_subplots
+import subprocess
+import signal
+import streamlit.components.v1 as components
+from config.trading_config import TRADING_CONFIG
+import json
+
+# --- Fast Load: Import Core Modules Only After Login ---
+import importlib
+import core.data
+import core.risk
+import core.strategies
+import core.bot
+
+# Optimization: Only reload when version changes to enable Fast Load
+SESSION_VERSION_KEY = "v24" 
+
+if 'loaded_core_version' not in st.session_state or st.session_state.loaded_core_version != SESSION_VERSION_KEY:
+    try:
+        # CORRECT RELOAD ORDER: Dependencies first
+        importlib.reload(core.data)
+        # core.auth is reloaded if needed but safe to skip for speed if stable
+        importlib.reload(core.risk)
+        importlib.reload(core.strategies) # Ensure strategies are updated
+        importlib.reload(core.bot)
+        st.session_state.loaded_core_version = SESSION_VERSION_KEY
+        print(f"Core modules reloaded for version {SESSION_VERSION_KEY}")
+    except Exception as e:
+        st.error(f"Error reloading core modules: {e}")
+
+from core.bot import TradingBot
+# Optimization: Lazy load other modules or only import what is strictly needed for the dashboard main thread
+# The following imports might be heavy or unused in the main loop
+# from core.auto_trader import AutoTrader # Accessed via bot.auto_trader
+# from core.copy_trading import CopyTradingModule # Accessed via sub-pages
+from core.nlp_engine import NLPEngine
+from core.sound_engine import SoundEngine
+from core.trade_replay import TradeReplay
+# from core.chaos import ChaosMonkey
+# from core.transparency import TransparencyLog, OracleManager
+# -------------------------------------------------------
+
+# Initialize Sound Engine (Post-Login)
+if 'sound_engine' not in st.session_state:
+    st.session_state.sound_engine = SoundEngine()
+
+# Initialize Trade Replay (Post-Login)
+if 'trade_replay' not in st.session_state:
+    st.session_state.trade_replay = TradeReplay()
+
 # Sidebar Configuration
 with st.sidebar:
     st.header("Global Configuration")
     
     # Navigation
-    page_nav = st.radio("Navigate", ["Trading Dashboard", "Trading Monitor", "Trading Terminal", "Arbitrage Scanner", "Copy Trading", "Blockchain & DeFi", "Quantum Lab", "Settings"], key="main_nav_radio")
+    page_nav = st.radio("Navigate", ["Trading Dashboard", "Wallet & Funds", "Strategy Manager", "Trading Monitor", "Trading Terminal", "Arbitrage Scanner", "Copy Trading", "Blockchain & DeFi", "Quantum Lab", "Settings"], key="main_nav_radio")
     
     st.divider()
     
@@ -362,22 +457,178 @@ with st.sidebar:
     # Update session state
     st.session_state.exchange = exchange
 
+    # Sync global connection state with specific exchange state
+    if f"{exchange}_connected" in st.session_state:
+        st.session_state.exchange_connected = st.session_state[f"{exchange}_connected"]
+    else:
+        st.session_state.exchange_connected = False
+
     if connection_method == "API (Automatic Trading)":
         with st.expander("API Credentials", expanded=True):
-            api_key = st.text_input("API Key", type="password")
-            api_secret = st.text_input("API Secret", type="password")
-            if st.button("Connect Exchange"):
+            # 1. Auto-Load Keys & Determine Auto-Connect Intent
+            saved_key = None
+            saved_secret = None
+            should_auto_connect = False
+            
+            if st.session_state.logged_in:
+                saved_key, saved_secret = st.session_state.auth_manager.get_api_keys(st.session_state.username, exchange)
+                
+                # Populate session state if empty (First load)
+                if saved_key and f"{exchange}_api_key" not in st.session_state:
+                    st.session_state[f"{exchange}_api_key"] = saved_key
+                if saved_secret and f"{exchange}_api_secret" not in st.session_state:
+                    st.session_state[f"{exchange}_api_secret"] = saved_secret
+                
+                # Check if we should auto-connect (Keys exist in DB)
+                if saved_key and saved_secret:
+                    should_auto_connect = True
+
+            # 2. UI Inputs
+            # Auto-fill if empty for quick support (User Provided Keys)
+            default_key = ""
+            default_secret = ""
+            
+            # Check session state for existing input
+            existing_key = st.session_state.get(f"{exchange}_api_key", "")
+            
+            if exchange == 'binance' and not existing_key and not saved_key:
+                default_key = "3MmGYZOzWqWD8IQZB9pOoCZlT4eSLG0RwBC8U2jqQEjQ7EpvtyuIwBhTQ0n9ESoS"
+                default_secret = "etIg4wOuIQho8DVI4CKv0PGYqALJEr0Ul3fQN50GbLkxDH0oicNJOfDdA2JEAMDv"
+
+            api_key = st.text_input("API Key", value=default_key, type="password", key=f"{exchange}_api_key")
+            api_secret = st.text_input("API Secret", value=default_secret, type="password", key=f"{exchange}_api_secret")
+            
+            # Validation Warning
+            if api_key and len(api_key.strip()) != 64 and exchange == 'binance':
+                 st.warning(f"Warning: API Key length is {len(api_key.strip())} (Expected 64). Double check your key.")
+            
+            c_conn, c_disc = st.columns(2)
+            with c_conn:
+                connect_clicked = st.button("Connect Exchange", type="primary")
+            
+            # Check for existing connection state
+            is_connected = st.session_state.get(f"{exchange}_connected", False)
+            
+            # 3. Connection Logic
+            if connect_clicked or (is_connected and api_key and api_secret) or (should_auto_connect and api_key and api_secret):
                 if api_key and api_secret:
                     try:
-                        # Initialize bot to access data manager
+                        # SANITIZE INPUTS
+                        api_key = api_key.strip()
+                        api_secret = api_secret.strip()
+                        
+                        # Initialize bot
                         temp_bot = get_bot(exchange)
-                        temp_bot.data_manager.update_credentials(api_key, api_secret)
-                        st.success(f"Connected to {exchange.upper()}!")
+                        
+                        # Optimization: Check if already connected to avoid redundant API calls on refresh
+                        # But if user clicked Connect, FORCE update
+                        already_connected = False
+                        if hasattr(temp_bot, 'data_manager') and temp_bot.data_manager.connection_status == "Connected":
+                             already_connected = True
+                        
+                        # Force update if clicked or not connected
+                        if connect_clicked or not already_connected:
+                            try:
+                                temp_bot.data_manager.update_credentials(api_key, api_secret)
+                            except Exception as cred_error:
+                                # Handle -2008 Explicitly in UI
+                                if "-2008" in str(cred_error) or "Invalid Api-Key ID" in str(cred_error):
+                                    st.error("Invalid API Key Detected (-2008). Please check your key.")
+                                    # Clear invalid keys from session state immediately
+                                    st.session_state[f"{exchange}_connected"] = False
+                                    if st.session_state.logged_in:
+                                        st.session_state.auth_manager.delete_api_keys(st.session_state.username, exchange)
+                                else:
+                                    st.error(f"Failed to Update Credentials: {cred_error}")
+                                raise cred_error # Re-raise to trigger the outer exception block
+
+                            
+                            # Validate Permissions (API Call)
+                            show_spinner = connect_clicked or not is_connected
+                            
+                            if show_spinner:
+                                with st.spinner(f"Connecting to {exchange.upper()}..."):
+                                    # Balance Check
+                                    bal_check = temp_bot.data_manager.get_balance()
+                                    asset_count = len(bal_check.get('total', {}))
+                                    if connect_clicked:
+                                        st.toast(f"Connection Verified! Found {asset_count} assets.", icon="✅")
+                            else:
+                                pass # Silent maintenance
+
+                        # Set Mode
+                        temp_bot.trading_mode = 'CEX_Direct'
+                        
+                        # Update State
+                        st.session_state[f"{exchange}_connected"] = True
                         st.session_state.exchange_connected = True
+                        
+                        # Save Keys (Persistence)
+                        if st.session_state.logged_in and (connect_clicked or should_auto_connect):
+                            st.session_state.auth_manager.save_api_keys(st.session_state.username, exchange, api_key, api_secret)
+                            
+                        if connect_clicked:
+                            if temp_bot.data_manager.offline_mode:
+                                st.warning(f"Connected to {exchange.upper()} but falling back to Mock Data due to connection issues.")
+                                st.caption("Please check your API Key permissions. (Invalid API-Key ID usually means the Key itself is wrong)")
+                            else:
+                                st.success(f"Connected to {exchange.upper()}!")
+                            
                     except Exception as e:
-                        st.error(f"Connection Failed: {e}")
-                else:
+                        st.session_state[f"{exchange}_connected"] = False
+                        if connect_clicked:
+                            st.error(f"Connection Failed: {e}")
+                            st.caption("Check API permissions and IP restrictions.")
+                        elif should_auto_connect:
+                             # Don't annoy user on every refresh if keys are bad, but maybe show warning once?
+                             pass
+                             
+            # 4. Disconnect Button
+            with c_disc:
+                if (is_connected or should_auto_connect) and st.button("Disconnect"):
+                    if st.session_state.logged_in:
+                        st.session_state.auth_manager.delete_api_keys(st.session_state.username, exchange)
+                    
+                    # Clear Session State
+                    st.session_state[f"{exchange}_connected"] = False
+                    st.session_state.exchange_connected = False
+                    if f"{exchange}_api_key" in st.session_state:
+                        del st.session_state[f"{exchange}_api_key"]
+                    if f"{exchange}_api_secret" in st.session_state:
+                        del st.session_state[f"{exchange}_api_secret"]
+                        
+                    # Reset Bot
+                    temp_bot = get_bot(exchange)
+                    temp_bot.trading_mode = 'Demo'
+                    st.cache_resource.clear()
+                    st.rerun()
+                elif connect_clicked:
                     st.warning("Please enter API Key and Secret")
+        
+        # Connect with Saved Keys Button
+        if st.button("Connect with Saved Keys"):
+            try:
+                from config.exchanges import EXCHANGES
+                if exchange in EXCHANGES and EXCHANGES[exchange]['apiKey']:
+                    # Use keys from config/env
+                    saved_key = EXCHANGES[exchange]['apiKey']
+                    saved_secret = EXCHANGES[exchange]['secret']
+                    
+                    temp_bot = get_bot(exchange)
+                    temp_bot.data_manager.update_credentials(saved_key, saved_secret)
+                    temp_bot.trading_mode = 'CEX_Direct'
+                    
+                    # Verify connection
+                    if temp_bot.data_manager.connection_status == "Connected":
+                        st.success(f"Connected to {exchange.upper()} using saved keys!")
+                        st.session_state.exchange_connected = True
+                        st.rerun()
+                    else:
+                         st.error(f"Connection Failed: {temp_bot.data_manager.connection_error}")
+                else:
+                    st.warning(f"No saved keys found for {exchange} in .env")
+            except Exception as e:
+                st.error(f"Error connecting with saved keys: {e}")
                     
     else: # Manual Sync
         with st.expander("Manual Portfolio Sync", expanded=True):
@@ -479,6 +730,11 @@ with st.sidebar:
     ]
     selected_strategy = st.selectbox("Active Strategy", strategy_options, index=0)
     
+    # Auto-Trading Control
+    auto_trading_enabled = st.checkbox("Enable Auto-Trading", value=False, help="Automatically execute trades based on signals")
+    if auto_trading_enabled:
+        st.caption("⚠️ Auto-Trading is Active. Trades will be executed automatically.")
+    
     # Strategy Parameters (Dynamic based on selection)
     if selected_strategy == "Grid Trading":
         grid_levels = st.slider("Grid Levels", 3, 10, 5)
@@ -493,17 +749,20 @@ with st.sidebar:
     is_connected = st.session_state.get('exchange_connected', False)
     
     # Auto-switch mode based on connection
-    active_mode = 'Live' if is_connected else 'Simulation'
+    ui_mode = 'Live' if is_connected else 'Simulation'
     
     # Allow manual override to Simulation even if connected (Safety feature)
     if is_connected:
         mode_override = st.radio("Active Mode", ["Live", "Simulation"], index=0, horizontal=True)
-        active_mode = mode_override
+        ui_mode = mode_override
     
+    # Map UI Mode to Internal Bot Mode
+    internal_mode = 'CEX_Direct' if ui_mode == 'Live' else 'Demo'
+
     # Apply Mode
     try:
         if hasattr(temp_bot, 'set_trading_mode'):
-            temp_bot.set_trading_mode(active_mode)
+            temp_bot.set_trading_mode(internal_mode)
         else:
             # Stale cache detected, force reload
             st.cache_resource.clear()
@@ -511,17 +770,62 @@ with st.sidebar:
     except AttributeError:
         st.cache_resource.clear()
         st.rerun()
+    except Exception as e:
+        st.error(f"Failed to set trading mode: {e}")
         
-    st.session_state.trading_mode = active_mode
+    st.session_state.trading_mode = ui_mode
     
     # Display Active Balance
-    bal_color = "red" if active_mode == 'Live' else "blue"
-    bal_label = f":{bal_color}[{active_mode.upper()} BALANCE]"
+    if ui_mode == 'Live' and is_connected:
+        # Auto-sync on load
+        try:
+            temp_bot.sync_live_balance()
+            # Update Cache immediately after successful sync
+            st.session_state[f"wallet_cache_{st.session_state.get('exchange', 'binance')}_v10"] = temp_bot.wallet_balances
+        except Exception as e:
+            st.error(f"Auto-sync error: {e}")
+
+    bal_color = "red" if ui_mode == 'Live' else "blue"
+    bal_label = f":{bal_color}[{ui_mode.upper()} BALANCE]"
+    
+    # Manual Sync Button (Small)
+    c_bal, c_sync = st.columns([3, 1])
+    with c_sync:
+        if st.button("🔄", help="Sync Balance", key="btn_sync_bal"):
+            with st.spinner("Syncing..."):
+                temp_bot.sync_live_balance()
+                # Update Cache
+                st.session_state[f"wallet_cache_{st.session_state.get('exchange', 'binance')}_v10"] = temp_bot.wallet_balances
+                st.rerun()
+
     current_bal = temp_bot.risk_manager.current_capital
     
-    st.metric(bal_label, f"${current_bal:,.2f}")
+    with c_bal:
+        st.metric(bal_label, f"${current_bal:,.2f}")
+
+        # Display Detailed Wallet
+        if hasattr(temp_bot, 'wallet_balances') and temp_bot.wallet_balances:
+            with st.expander("👛 Wallet Breakdown", expanded=False):
+                w_df = pd.DataFrame(temp_bot.wallet_balances)
+                if not w_df.empty:
+                    # Sort alphabetically by Asset for cleaner view
+                    w_df = w_df.sort_values(by='asset')
+                    
+                    st.dataframe(
+                        w_df, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "asset": "Asset",
+                            "total": st.column_config.NumberColumn("Total", format="%.8f"),
+                            "free": st.column_config.NumberColumn("Free", format="%.8f"),
+                            "locked": st.column_config.NumberColumn("Locked", format="%.8f"),
+                        }
+                    )
+                else:
+                    st.info("No assets found.")
     
-    if active_mode == 'Live':
+    if ui_mode == 'Live':
         st.error("⚠️ REAL FUNDS AT RISK")
         st.caption("✅ Connected to Exchange")
     else:
@@ -535,7 +839,7 @@ with st.sidebar:
         st.stop()
     
     # Auto-Refresh for Live Feed
-    auto_refresh = st.toggle("Enable Live Feed (Auto-Refresh)", value=False)
+    auto_refresh = st.toggle("Enable Live Feed (Auto-Refresh)", value=True)
     
     st.divider()
     
@@ -555,29 +859,348 @@ with st.sidebar:
             st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
             st.rerun()
 
+if page_nav == "Wallet & Funds":
+    st.title("👛 Wallet & Assets")
+    
+    # Initialize Bot
+    try:
+        bot = get_bot(exchange)
+        
+        # Auto-Sync Logic: If connected but no wallet data, sync automatically
+        if st.session_state.exchange_connected:
+            should_sync = False
+            
+            # Check if wallet_balances is missing or empty
+            if not hasattr(bot, 'wallet_balances') or not bot.wallet_balances:
+                should_sync = True
+            
+            if should_sync:
+                with st.spinner("Auto-syncing balances..."):
+                    try:
+                        bot.sync_live_balance()
+                        # Cache wallet balances
+                        st.session_state[f"wallet_cache_{exchange}_v10"] = bot.wallet_balances
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "CRITICAL_API_ERROR" in error_msg or "-2008" in error_msg:
+                            st.error("🚨 CRITICAL: Invalid API Credentials detected.")
+                            st.error(error_msg)
+                            st.info("Please go to the sidebar and re-enter your API Key and Secret.")
+                            
+                            # Force disconnect in UI
+                            st.session_state[f"{exchange}_connected"] = False
+                            st.session_state.exchange_connected = False
+                            
+                            # Clear from session state to force re-entry
+                            if f"{exchange}_api_key" in st.session_state: del st.session_state[f"{exchange}_api_key"]
+                            if f"{exchange}_api_secret" in st.session_state: del st.session_state[f"{exchange}_api_secret"]
+                        else:
+                            st.error(f"Auto-sync failed: {e}")
+
+            # Top Bar: Connection & Sync
+            c_status, c_sync = st.columns([3, 1])
+            with c_status:
+                st.markdown(f"**Connected Exchange:** `{exchange.upper()}` | **Mode:** `{bot.trading_mode}`")
+            with c_sync:
+                if st.button("🔄 Sync Balance", use_container_width=True):
+                    with st.spinner("Syncing..."):
+                        try:
+                            bot.sync_live_balance()
+                            st.session_state[f"wallet_cache_{exchange}_v10"] = bot.wallet_balances
+                            st.session_state['last_wallet_sync'] = time.time()
+                            st.rerun()
+                        except Exception as e:
+                            error_msg = str(e)
+                            if "CRITICAL_API_ERROR" in error_msg or "-2008" in error_msg:
+                                st.error("🚨 CRITICAL: Invalid API Credentials detected.")
+                                st.warning("Credentials have been invalidated. Please re-enter them in the sidebar.")
+                                
+                                # Force disconnect in UI
+                                st.session_state[f"{exchange}_connected"] = False
+                                st.session_state.exchange_connected = False
+                                
+                                # Clear from session state
+                                if f"{exchange}_api_key" in st.session_state: del st.session_state[f"{exchange}_api_key"]
+                                if f"{exchange}_api_secret" in st.session_state: del st.session_state[f"{exchange}_api_secret"]
+                            else:
+                                st.error(f"Sync failed: {e}")
+
+            st.divider()
+
+            # Main Balance Display
+            total_usdt = bot.risk_manager.current_capital
+            wallet_len = len(bot.wallet_balances) if hasattr(bot, 'wallet_balances') else 0
+            has_data = hasattr(bot, 'wallet_balances') and bot.wallet_balances
+            
+            # Hero Metrics
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("Total Estimated Value", f"${total_usdt:,.2f}", delta=None)
+            with m2:
+                # Calculate Liquid USDT
+                free_usdt = 0.0
+                if has_data:
+                    for item in bot.wallet_balances:
+                        if 'USDT' in item['asset']:
+                            free_usdt += item['free']
+                st.metric("Liquid USDT", f"${free_usdt:,.2f}")
+            with m3:
+                st.metric("Active Assets", wallet_len)
+
+            st.divider()
+
+            if has_data:
+                # Prepare DataFrame
+                df = pd.DataFrame(bot.wallet_balances)
+                
+                # Layout: Left (Tabs for Assets), Right (Chart)
+                col_assets, col_chart = st.columns([2, 1])
+                
+                with col_assets:
+                    st.subheader("Asset Breakdown")
+                    
+                    # Categorize
+                    df['category'] = df['asset'].apply(
+                        lambda x: "Earn" if "(Earn)" in x else ("Funding" if "(Fund)" in x else "Spot")
+                    )
+                    
+                    # Tabs
+                    tab_all, tab_spot, tab_earn = st.tabs(["All Assets", "Spot Wallet", "Earn/Funding"])
+                    
+                    # Column Config
+                    col_cfg = {
+                        "asset": "Asset",
+                        "total": st.column_config.NumberColumn("Total", format="%.8f"), 
+                        "free": st.column_config.NumberColumn("Free", format="%.8f"),
+                        "locked": st.column_config.NumberColumn("Locked/Used", format="%.8f"),
+                        "category": "Category"
+                    }
+                    
+                    with tab_all:
+                        st.dataframe(
+                            df.sort_values(by='total', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config=col_cfg
+                        )
+                        
+                    with tab_spot:
+                        st.dataframe(
+                            df[df['category'] == 'Spot'].sort_values(by='total', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config=col_cfg
+                        )
+                        
+                    with tab_earn:
+                        st.dataframe(
+                            df[df['category'].isin(['Earn', 'Funding'])].sort_values(by='total', ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config=col_cfg
+                        )
+
+                with col_chart:
+                    st.subheader("Allocation")
+                    df_chart = df[df['total'] > 0].copy()
+                    if not df_chart.empty:
+                        # Limit for chart
+                        if len(df_chart) > 10:
+                            df_chart = df_chart.sort_values('total', ascending=False).head(10)
+                            
+                        fig = go.Figure(data=[go.Pie(
+                            labels=df_chart['asset'], 
+                            values=df_chart['total'], 
+                            hole=.5,
+                            textinfo='label+percent',
+                            showlegend=False
+                        )])
+                        fig.update_layout(
+                            margin=dict(t=0, b=0, l=0, r=0), 
+                            height=300,
+                            annotations=[dict(text='Portfolio', x=0.5, y=0.5, font_size=20, showarrow=False)]
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No non-zero assets to display.")
+
+            else:
+                # No data in wallet_balances
+                st.container()
+                if st.session_state.get('last_wallet_sync'):
+                    st.warning("⚠️ Wallet Synced but 0 Assets Found.")
+                    st.markdown("""
+                        **Possible Reasons:**
+                        - API Key permissions missing (Need 'Spot' or 'Wallet' read access).
+                        - Wallet is actually empty.
+                        - Exchange API returned empty list.
+                        
+                        *Check Debug Logs below for raw response.*
+                    """)
+                else:
+                    st.info("👋 Ready to Sync! Click the button above to fetch balances.")
+            
+            # Evidence/Debug Section
+            with st.expander("🛠️ Debug Logs & Evidence"):
+                st.markdown("#### Session Cache State")
+                cache_key = f"wallet_cache_{exchange}_v10"
+                if cache_key in st.session_state:
+                    cached_data = st.session_state[cache_key]
+                    st.write(f"Cache Key: `{cache_key}`")
+                    st.write(f"Cached Items: {len(cached_data)}")
+                    if cached_data:
+                        st.json(cached_data[:5]) # Show first 5 items
+                else:
+                    st.warning(f"Cache Key `{cache_key}` NOT FOUND in Session State.")
+                
+                st.markdown("#### Raw Log File")
+                if os.path.exists("debug_wallet_log.txt"):
+                    with open("debug_wallet_log.txt", "r", encoding='utf-8', errors='replace') as f:
+                        st.code(f.read(), language="text")
+                else:
+                    st.caption("No debug log found. Click 'Sync Now' to generate.")
+
+            # Auto-Refresh Option
+            if st.toggle("Enable Auto-Refresh (30s)", value=False):
+                time.sleep(30)
+                st.rerun()
+                
+        else:
+            st.warning("Please connect to an exchange API in the sidebar to view wallet balances.")
+            st.info("Navigate to 'Settings' or use the sidebar 'Exchange Manager' to connect.")
+            
+    except Exception as e:
+        st.error(f"Error loading wallet: {e}")
+
+if page_nav == "Strategy Manager":
+    st.title("🧠 Strategy Command Center")
+    
+    # Initialize Bot
+    try:
+        bot = get_bot(exchange)
+    except:
+        st.error("Bot initialization failed.")
+        st.stop()
+        
+    st.caption(f"Active Mode: {bot.trading_mode} | Exchange: {exchange.upper()}")
+    
+    # Strategy Selection
+    st.subheader("Strategy Selection")
+    
+    current_strat = bot.active_strategy_name
+    strategy_names = list(bot.strategies.keys())
+    
+    # Find index
+    try:
+        idx = strategy_names.index(current_strat)
+    except:
+        idx = 0
+        
+    selected_strat = st.selectbox("Select Active Strategy", strategy_names, index=idx)
+    
+    if selected_strat != current_strat:
+        bot.active_strategy_name = selected_strat
+        bot.active_strategy = bot.strategies[selected_strat]
+        st.success(f"Switched to {selected_strat}")
+        st.rerun()
+        
+    st.info(f"Currently Running: **{bot.active_strategy.name}**")
+    st.markdown(bot.active_strategy.__doc__ or "No description available.")
+    
+    st.divider()
+    
+    # Configuration
+    st.subheader("Configuration & Parameters")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.number_input("Risk per Trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1, help="Percentage of account balance to risk per trade.")
+        st.number_input("Max Open Positions", min_value=1, max_value=10, value=3)
+    with c2:
+        st.selectbox("Timeframe", ['1m', '5m', '15m', '1h', '4h', '1d'], index=3)
+        st.toggle("Use AI Confirmation", value=True, help="Use Capa-X Brain to validate signals.")
+        
+    st.divider()
+    
+    # Auto-Trading Control
+    st.subheader("🤖 Automated Execution")
+
+    # Initialize AutoTrader in Session State if missing
+    if 'auto_trader' not in st.session_state:
+        # Create a persistent AutoTrader instance attached to the bot
+        # We store it in session state so we don't lose the thread handle
+        st.session_state.auto_trader = AutoTrader(bot)
+    
+    at = st.session_state.auto_trader
+    
+    # Sync AT config with UI
+    if not at.is_running:
+        at.symbols = [symbol] # Currently selected symbol
+        at.tf = timeframe
+        # Update risk from bot risk manager which might have been updated above
+        at.risk = bot.risk_manager 
+
+    col_run, col_status = st.columns([1, 3])
+    
+    with col_run:
+        if at.is_running:
+            if st.button("⏹ Stop Auto-Trading", type="primary"):
+                at.stop()
+                st.success("Stopping...")
+                time.sleep(1)
+                st.rerun()
+        else:
+            if st.button("▶ Start Auto-Trading"):
+                at.start()
+                st.success("Started Auto-Trading Loop!")
+                time.sleep(1)
+                st.rerun()
+                
+    with col_status:
+        if at.is_running:
+            st.success(f"RUNNING: Capa-X Bot Active on {at.symbols}")
+            st.caption("Background thread active. You can navigate to other tabs.")
+            st.progress(100, text="Monitoring Market...")
+            
+            # Auto-refresh to show updates without blocking
+            if st.toggle("Auto-Refresh Log", value=True):
+                time.sleep(5)
+                st.rerun()
+        else:
+            st.warning("STOPPED: Bot is idle. Click Start to engage.")
+            
+    # Live Trade Log
+    st.divider()
+    st.subheader("📝 Live Trade Log")
+    
+    # Check bot positions
+    trades = bot.positions.get(bot.trading_mode, [])
+    if trades:
+        trades_df = pd.DataFrame(trades)
+        # Format for display
+        display_df = trades_df.copy()
+        if 'timestamp' not in display_df.columns:
+            display_df['timestamp'] = pd.Timestamp.now()
+            
+        st.dataframe(
+            display_df.sort_index(ascending=False), 
+            use_container_width=True,
+            column_config={
+                "timestamp": st.column_config.DatetimeColumn("Time", format="HH:mm:ss"),
+                "side": "Side",
+                "price": st.column_config.NumberColumn("Price", format="$%.2f"),
+                "qty": st.column_config.NumberColumn("Qty", format="%.4f"),
+                "pnl": st.column_config.NumberColumn("PnL", format="$%.2f")
+            }
+        )
+    else:
+        st.info("No trades executed yet in this session.")
+
 if page_nav == "Trading Dashboard":
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     st.title(f"📈 {symbol} Command Center")
     
-    # Capa-X Assistant (NLP)
-    with st.expander("🤖 Capa-X Assistant", expanded=False):
-        c_nlp, c_help = st.columns([4, 1])
-        with c_nlp:
-            user_query = st.text_input("Ask Capa-X...", placeholder="Type commands like 'Buy 0.5 BTC', 'Sentiment Check', or 'Status Report'...")
-        with c_help:
-            st.caption("Try: *'Sentiment Check'*, *'Switch to Grid Trading'*, *'Price of ETH'*")
-            
-        if user_query:
-            if 'nlp_engine' in st.session_state:
-                response = st.session_state.nlp_engine.process_query(user_query, st.session_state.user_manager)
-                st.markdown(f"**Capa-X:** {response}")
-                
-                # Execute config actions if needed (handled inside process_query mostly, but UI updates here)
-                if "Switching strategy" in response:
-                    time.sleep(1)
-                    st.rerun()
-            else:
-                st.error("NLP Engine not initialized.")
-
     # Initialize Bot
     try:
         bot = get_bot(exchange)
@@ -604,6 +1227,26 @@ if page_nav == "Trading Dashboard":
         st.error(f"Failed to initialize bot: {e}")
         st.stop()
 
+    # Capa-X Assistant (NLP)
+    with st.expander("🤖 Capa-X Assistant", expanded=False):
+        c_nlp, c_help = st.columns([4, 1])
+        with c_nlp:
+            user_query = st.text_input("Ask Capa-X...", placeholder="Type commands like 'Buy 0.5 BTC', 'Sentiment Check', or 'Status Report'...")
+        with c_help:
+            st.caption("Try: *'Sentiment Check'*, *'Switch to Grid Trading'*, *'Price of ETH'*")
+            
+        if user_query:
+            if 'nlp_engine' in st.session_state:
+                response = st.session_state.nlp_engine.process_query(user_query, st.session_state.user_manager)
+                st.markdown(f"**Capa-X:** {response}")
+                
+                # Execute config actions if needed (handled inside process_query mostly, but UI updates here)
+                if "Switching strategy" in response:
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                st.error("NLP Engine not initialized.")
+
     # Layout: Chart (Left 75%), Signal Panel (Right 25%)
     col_chart, col_signal = st.columns([3, 1])
     
@@ -628,299 +1271,431 @@ if page_nav == "Trading Dashboard":
         
         # --- Chart Section ---
         with col_chart:
-            # Chart Controls
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                show_volume = st.checkbox("Show Volume", value=True)
-            with c2:
-                indicators_selected = st.multiselect("Indicators", ["RSI", "MACD", "Bollinger Bands", "EMA", "ADX", "Trend Cloud", "SuperTrend"], default=["EMA", "SuperTrend"])
-            with c3:
-                chart_type = st.selectbox("Chart Type", ["Candlestick", "Line", "Heikin Ashi"], index=0)
-                show_zones = st.checkbox("Show Bull/Bear Zones", value=True)
-                show_quantum = st.checkbox("🔮 Quantum Forecast", value=False)
+            # Chart Mode Selection
+            chart_mode = st.radio("Chart Source", ["Live WebSocket (Binance)", "Static Analysis (Plotly)"], horizontal=True)
 
-            # Construct Plotly Figure
-            subplot_titles = [f"{symbol} Price ({timeframe}) - {market_regime} Regime"]
-            row_h = [0.6]
-            specs = [[{"secondary_y": False}]]
-            
-            current_row = 2
-            
-            if show_volume:
-                subplot_titles.append("Volume")
-                specs.append([{"secondary_y": False}])
-                row_h.append(0.15)
-                current_row += 1
-            
-            if 'RSI' in indicators_selected:
-                subplot_titles.append("RSI (14)")
-                specs.append([{"secondary_y": False}])
-                row_h.append(0.15)
-                current_row += 1
-                
-            if 'MACD' in indicators_selected:
-                subplot_titles.append("MACD")
-                specs.append([{"secondary_y": False}])
-                row_h.append(0.15)
-                current_row += 1
-            
-            # Normalize row heights
-            total_h = sum(row_h)
-            row_h = [h/total_h for h in row_h]
-
-            fig = make_subplots(
-                rows=current_row - 1, 
-                cols=1, 
-                shared_xaxes=True, 
-                vertical_spacing=0.05, 
-                row_heights=row_h,
-                subplot_titles=subplot_titles
-            )
-
-            # Main Candlestick
-            fig.add_trace(go.Candlestick(
-                x=df.index, 
-                open=df['open'], 
-                high=df['high'], 
-                low=df['low'], 
-                close=df['close'], 
-                name='OHLC'
-            ), row=1, col=1)
-
-            # Bull/Bear Zones Visualization
-            if show_zones:
-                # Determine Trend Source
-                trend_col = None
-                if 'supertrend_dir' in df.columns:
-                    trend_col = 'supertrend_dir' # 1 or -1
-                elif 'close' in df.columns:
-                    # Fallback to simple SMA trend if no SuperTrend
-                    df['sma_50'] = df['close'].rolling(50).mean()
-                    df['trend_proxy'] = np.where(df['close'] > df['sma_50'], 1, -1)
-                    trend_col = 'trend_proxy'
-                
-                if trend_col:
-                    # Identify segments to avoid thousands of vrects
-                    # We create a new column 'segment_id' that changes when trend changes
-                    df['segment_id'] = (df[trend_col] != df[trend_col].shift(1)).cumsum()
-                    
-                    # Group by segment
-                    segments = df.groupby('segment_id').agg(
-                        start_time=('index', 'first'),
-                        end_time=('index', 'last'),
-                        trend=(trend_col, 'first')
-                    )
-                    
-                    # Plot Rectangles
-                    for _, seg in segments.iterrows():
-                        color = "rgba(0, 255, 0, 0.1)" if seg['trend'] == 1 else "rgba(255, 0, 0, 0.1)"
-                        fig.add_vrect(
-                            x0=seg['start_time'], 
-                            x1=seg['end_time'],
-                            fillcolor=color, 
-                            opacity=1, 
-                            layer="below", 
-                            line_width=0
-                        )
-
-            # SuperTrend & Live Signal Markers
-            if "SuperTrend" in indicators_selected and 'supertrend' in df.columns:
-                # Plot SuperTrend Line
-                # We can color it dynamically if we split the series, but a single line is safer for performance
-                fig.add_trace(go.Scatter(
-                    x=df.index, 
-                    y=df['supertrend'], 
-                    mode='lines',
-                    line=dict(color='magenta', width=2),
-                    name='SuperTrend'
-                ), row=1, col=1)
-                
-                # Generate Buy/Sell Markers from SuperTrend Crossovers
-                if 'supertrend_dir' in df.columns:
-                    # Detect flips
-                    # 1 = Bullish, -1 = Bearish
-                    # Buy: Previous was -1, Current is 1
-                    # Sell: Previous was 1, Current is -1
-                    
-                    # We need to operate on the series
-                    st_dir = df['supertrend_dir']
-                    st_shift = st_dir.shift(1)
-                    
-                    buy_mask = (st_dir == 1) & (st_shift == -1)
-                    sell_mask = (st_dir == -1) & (st_shift == 1)
-                    
-                    buy_points = df[buy_mask]
-                    sell_points = df[sell_mask]
-                    
-                    if not buy_points.empty:
-                        fig.add_trace(go.Scatter(
-                            x=buy_points.index,
-                            y=buy_points['low'] * 0.995, # Just below low
-                            mode='markers+text',
-                            marker=dict(symbol='triangle-up', size=15, color='#00FF00'),
-                            text=["BUY"] * len(buy_points),
-                            textposition="bottom center",
-                            name='Buy Signal'
-                        ), row=1, col=1)
-                        
-                    if not sell_points.empty:
-                        fig.add_trace(go.Scatter(
-                            x=sell_points.index,
-                            y=sell_points['high'] * 1.005, # Just above high
-                            mode='markers+text',
-                            marker=dict(symbol='triangle-down', size=15, color='#FF0000'),
-                            text=["SELL"] * len(sell_points),
-                            textposition="top center",
-                            name='Sell Signal'
-                        ), row=1, col=1)
-
-            # Add Indicators to Main Chart
-            if show_quantum:
+            if chart_mode == "Live WebSocket (Binance)":
+                # Check dependencies (Non-blocking warning)
+                missing_deps = []
                 try:
-                    # Calculate volatility
-                    returns = df['close'].pct_change().dropna()
-                    vol = returns.std() if not returns.empty else 0.01
-                    # Annualize approx or just use period vol
-                    # For hourly simulation steps
+                    import dash
+                except ImportError:
+                    missing_deps.append("dash")
+                try:
+                    import websockets
+                except ImportError:
+                    missing_deps.append("websockets")
+                
+                if missing_deps:
+                    st.warning(f"Potential missing dependencies: {', '.join(missing_deps)}. Live Chart might fail.")
+                    st.info("Attempting to launch anyway...")
+                
+                st.info(f"Streaming live data for {symbol} ({timeframe}) via Binance WebSocket")
                     
-                    current_price = df['close'].iloc[-1]
+                # Manage Live Chart Process
+                restart = False
+                if 'live_chart_pid' in st.session_state:
+                    if st.session_state.get('live_chart_symbol') != symbol or st.session_state.get('live_chart_interval') != timeframe:
+                        restart = True
+                else:
+                    restart = True
+                
+                if restart:
+                    if 'live_chart_pid' in st.session_state:
+                        try:
+                            os.kill(st.session_state['live_chart_pid'], signal.SIGTERM)
+                        except:
+                            pass
                     
-                    # Generate paths
-                    paths = bot.quantum.generate_probability_wave(current_price, vol, steps=24, paths=30)
+                    # Start new process
+                    cmd = [sys.executable, "core/live_chart.py", "--symbol", symbol, "--interval", timeframe, "--port", "8050"]
+                    # CREATE_NO_WINDOW = 0x08000000
+                    creation_flags = 0x08000000 if sys.platform == 'win32' else 0
                     
-                    # Create future dates
-                    last_date = df.index[-1]
-                    # Handle different index types (datetime vs range)
+                    proc = subprocess.Popen(cmd, cwd=os.getcwd(), creationflags=creation_flags)
+                    
+                    st.session_state['live_chart_pid'] = proc.pid
+                    st.session_state['live_chart_symbol'] = symbol
+                    st.session_state['live_chart_interval'] = timeframe
+                    
+                    time.sleep(2) # Wait for server to start
+                    st.rerun()
+                
+                components.iframe("http://localhost:8050", height=800)
+            
+            else:
+                # Cleanup Live Chart Process if it exists
+                if 'live_chart_pid' in st.session_state:
                     try:
-                        future_dates = [last_date + pd.Timedelta(hours=i+1) for i in range(24)]
+                        os.kill(st.session_state['live_chart_pid'], signal.SIGTERM)
+                        del st.session_state['live_chart_pid']
+                        print("Stopped Live Chart process.")
                     except:
-                        future_dates = [i for i in range(24)] # Fallback
+                        pass
+                
+                # Chart Controls
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    show_volume = st.checkbox("Show Volume", value=True)
+                with c2:
+                    indicators_selected = st.multiselect("Indicators", ["RSI", "MACD", "Bollinger Bands", "EMA", "ADX", "Trend Cloud", "SuperTrend"], default=["EMA", "SuperTrend"])
+                with c3:
+                    chart_type = st.selectbox("Chart Type", ["Candlestick", "Line", "Heikin Ashi"], index=0)
+                    show_zones = st.checkbox("Show Bull/Bear Zones", value=True)
+                    show_quantum = st.checkbox("🔮 Quantum Forecast", value=False)
+
+                # Construct Plotly Figure
+                subplot_titles = [f"{symbol} Price ({timeframe}) - {market_regime} Regime"]
+                row_h = [0.6]
+                specs = [[{"secondary_y": False}]]
+                
+                current_row = 2
+                
+                if show_volume:
+                    subplot_titles.append("Volume")
+                    specs.append([{"secondary_y": False}])
+                    row_h.append(0.15)
+                    current_row += 1
+                
+                if 'RSI' in indicators_selected:
+                    subplot_titles.append("RSI (14)")
+                    specs.append([{"secondary_y": False}])
+                    row_h.append(0.15)
+                    current_row += 1
                     
-                    for path in paths:
-                        # path includes current price as first element? generate_probability_wave returns list starting with current?
-                        # Let's check logic: yes, prices = [current_price], then appends.
-                        # So len is steps + 1
+                if 'MACD' in indicators_selected:
+                    subplot_titles.append("MACD")
+                    specs.append([{"secondary_y": False}])
+                    row_h.append(0.15)
+                    current_row += 1
+                
+                # Normalize row heights
+                total_h = sum(row_h)
+                row_h = [h/total_h for h in row_h]
+
+                fig = make_subplots(
+                    rows=current_row - 1, 
+                    cols=1, 
+                    shared_xaxes=True, 
+                    vertical_spacing=0.05, 
+                    row_heights=row_h,
+                    subplot_titles=subplot_titles
+                )
+
+                # Main Candlestick
+                fig.add_trace(go.Candlestick(
+                    x=df.index, 
+                    open=df['open'], 
+                    high=df['high'], 
+                    low=df['low'], 
+                    close=df['close'], 
+                    name='OHLC'
+                ), row=1, col=1)
+
+                # Bull/Bear Zones Visualization
+                if show_zones:
+                    # Determine Trend Source
+                    trend_col = None
+                    if 'supertrend_dir' in df.columns:
+                        trend_col = 'supertrend_dir' # 1 or -1
+                    elif 'close' in df.columns:
+                        # Fallback to simple SMA trend if no SuperTrend
+                        df['sma_50'] = df['close'].rolling(50).mean()
+                        df['trend_proxy'] = np.where(df['close'] > df['sma_50'], 1, -1)
+                        trend_col = 'trend_proxy'
+                    
+                    if trend_col:
+                        # Identify segments to avoid thousands of vrects
+                        # We create a new column 'segment_id' that changes when trend changes
+                        df['segment_id'] = (df[trend_col] != df[trend_col].shift(1)).cumsum()
                         
-                        fig.add_trace(go.Scatter(
-                            x=[last_date] + future_dates,
-                            y=path, # path has steps+1 elements
-                            mode='lines',
-                            line=dict(color='cyan', width=1),
-                            opacity=0.05,
-                            showlegend=False,
-                            hoverinfo='skip'
-                        ), row=1, col=1)
-                except Exception as e:
-                    st.error(f"Quantum Viz Error: {e}")
+                        # Group by segment
+                        # Fix: Ensure index is available for aggregation by creating a temporary column
+                        df['ts_agg'] = df.index
+                        segments = df.groupby('segment_id').agg(
+                            start_time=('ts_agg', 'first'),
+                            end_time=('ts_agg', 'last'),
+                            trend=(trend_col, 'first')
+                        )
+                        
+                        # Plot Rectangles
+                        for _, seg in segments.iterrows():
+                            color = "rgba(0, 255, 0, 0.1)" if seg['trend'] == 1 else "rgba(255, 0, 0, 0.1)"
+                            fig.add_vrect(
+                                x0=seg['start_time'], 
+                                x1=seg['end_time'],
+                                fillcolor=color, 
+                                opacity=1, 
+                                layer="below", 
+                                line_width=0
+                            )
 
-            if "Trend Cloud" in indicators_selected:
-                # EMA Cloud (20-50) for Visual Trend
-                e20 = df['close'].ewm(span=20).mean()
-                e50 = df['close'].ewm(span=50).mean()
+                # SuperTrend & Live Signal Markers
+                if "SuperTrend" in indicators_selected and 'supertrend' in df.columns:
+                    # Plot SuperTrend Line
+                    # We can color it dynamically if we split the series, but a single line is safer for performance
+                    fig.add_trace(go.Scatter(
+                        x=df.index, 
+                        y=df['supertrend'], 
+                        mode='lines',
+                        line=dict(color='magenta', width=2),
+                        name='SuperTrend'
+                    ), row=1, col=1)
+                    
+                    # Generate Buy/Sell Markers from SuperTrend Crossovers
+                    if 'supertrend_dir' in df.columns:
+                        # Detect flips
+                        # 1 = Bullish, -1 = Bearish
+                        # Buy: Previous was -1, Current is 1
+                        # Sell: Previous was 1, Current is -1
+                        
+                        # We need to operate on the series
+                        st_dir = df['supertrend_dir']
+                        st_shift = st_dir.shift(1)
+                        
+                        buy_mask = (st_dir == 1) & (st_shift == -1)
+                        sell_mask = (st_dir == -1) & (st_shift == 1)
+                        
+                        buy_points = df[buy_mask]
+                        sell_points = df[sell_mask]
+                        
+                        if not buy_points.empty:
+                            fig.add_trace(go.Scatter(
+                                x=buy_points.index,
+                                y=buy_points['low'] * 0.995, # Just below low
+                                mode='markers+text',
+                                marker=dict(symbol='triangle-up', size=15, color='#00FF00'),
+                                text=["BUY"] * len(buy_points),
+                                textposition="bottom center",
+                                name='Buy Signal'
+                            ), row=1, col=1)
+                            
+                        if not sell_points.empty:
+                            fig.add_trace(go.Scatter(
+                                x=sell_points.index,
+                                y=sell_points['high'] * 1.005, # Just above high
+                                mode='markers+text',
+                                marker=dict(symbol='triangle-down', size=15, color='#FF0000'),
+                                text=["SELL"] * len(sell_points),
+                                textposition="top center",
+                                name='Sell Signal'
+                            ), row=1, col=1)
+
+                # Plot Actual Executed Trades (Live from Bot)
+                executed_trades = bot.positions.get(bot.trading_mode, [])
+                if executed_trades:
+                    # Filter for current symbol
+                    sym_trades = [t for t in executed_trades if t['symbol'] == symbol]
+                    
+                    if sym_trades:
+                        t_df = pd.DataFrame(sym_trades)
+                        # Ensure timestamp is datetime and match timezone if needed
+                        # Assuming trade timestamp is local/matching chart index
+                        # If chart index is tz-aware, we might need conversion
+                        
+                        # Buys
+                        buys = t_df[t_df['side'] == 'buy']
+                        if not buys.empty:
+                            fig.add_trace(go.Scatter(
+                                x=buys['timestamp'], # Assumes timestamp exists in trade dict
+                                y=buys['price'],
+                                mode='markers',
+                                marker=dict(symbol='triangle-up', size=18, color='#00FF00', line=dict(width=2, color='white')),
+                                name='Executed BUY',
+                                hovertemplate='BUY %{y:.2f}<br>Qty: %{text}',
+                                text=buys['qty']
+                            ), row=1, col=1)
+                            
+                        # Sells
+                        sells = t_df[t_df['side'] == 'sell']
+                        if not sells.empty:
+                            fig.add_trace(go.Scatter(
+                                x=sells['timestamp'],
+                                y=sells['price'],
+                                mode='markers',
+                                marker=dict(symbol='triangle-down', size=18, color='#FF0000', line=dict(width=2, color='white')),
+                                name='Executed SELL',
+                                hovertemplate='SELL %{y:.2f}<br>Qty: %{text}',
+                                text=sells['qty']
+                            ), row=1, col=1)
+
+                # Add Indicators to Main Chart
+                if show_quantum:
+                    try:
+                        # Calculate volatility
+                        returns = df['close'].pct_change().dropna()
+                        vol = returns.std() if not returns.empty else 0.01
+                        # Annualize approx or just use period vol
+                        # For hourly simulation steps
+                        
+                        current_price = df['close'].iloc[-1]
+                        
+                        # Generate paths
+                        paths = bot.quantum.generate_probability_wave(current_price, vol, steps=24, paths=30)
+                        
+                        # Create future dates
+                        last_date = df.index[-1]
+                        # Handle different index types (datetime vs range)
+                        try:
+                            future_dates = [last_date + pd.Timedelta(hours=i+1) for i in range(24)]
+                        except:
+                            future_dates = [i for i in range(24)] # Fallback
+                        
+                        for path in paths:
+                            # path includes current price as first element? generate_probability_wave returns list starting with current?
+                            # Let's check logic: yes, prices = [current_price], then appends.
+                            # So len is steps + 1
+                            
+                            fig.add_trace(go.Scatter(
+                                x=[last_date] + future_dates,
+                                y=path, # path has steps+1 elements
+                                mode='lines',
+                                line=dict(color='cyan', width=1),
+                                opacity=0.05,
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ), row=1, col=1)
+                    except Exception as e:
+                        st.error(f"Quantum Viz Error: {e}")
+
+                if "Trend Cloud" in indicators_selected:
+                    # EMA Cloud (20-50) for Visual Trend
+                    e20 = df['close'].ewm(span=20).mean()
+                    e50 = df['close'].ewm(span=50).mean()
+                    
+                    # We need two traces for the fill
+                    fig.add_trace(go.Scatter(
+                        x=df.index, 
+                        y=e20, 
+                        line=dict(width=0), 
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ), row=1, col=1)
+                    
+                    fig.add_trace(go.Scatter(
+                        x=df.index, 
+                        y=e50, 
+                        fill='tonexty', 
+                        fillcolor='rgba(0, 150, 255, 0.15)', 
+                        line=dict(width=0), 
+                        name='Trend Cloud'
+                    ), row=1, col=1)
+
+                if "EMA" in indicators_selected:
+                    fig.add_trace(go.Scatter(x=df.index, y=df['close'].ewm(span=20).mean(), line=dict(color='orange', width=1), name='EMA 20'), row=1, col=1)
                 
-                # We need two traces for the fill
-                fig.add_trace(go.Scatter(
-                    x=df.index, 
-                    y=e20, 
-                    line=dict(width=0), 
-                    showlegend=False,
-                    hoverinfo='skip'
-                ), row=1, col=1)
+                if "Bollinger Bands" in indicators_selected:
+                    # Simple calculation for display
+                    sma = df['close'].rolling(20).mean()
+                    std = df['close'].rolling(20).std()
+                    upper = sma + (std * 2)
+                    lower = sma - (std * 2)
+                    fig.add_trace(go.Scatter(x=df.index, y=upper, line=dict(color='gray', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=df.index, y=lower, line=dict(color='gray', width=1, dash='dot'), name='BB Lower'), row=1, col=1)
+
+                # Add Regime Annotation (Background Color)
+                regime_color = "rgba(0, 255, 0, 0.05)" if "Trend" in market_regime else "rgba(255, 165, 0, 0.05)"
+                fig.add_vrect(
+                    x0=df.index[0], 
+                    x1=df.index[-1],
+                    fillcolor=regime_color, 
+                    opacity=1, 
+                    layer="below", 
+                    line_width=0,
+                    annotation_text=market_regime, 
+                    annotation_position="top left"
+                )
+
+                # Volume
+                curr_row_idx = 2
+                if show_volume:
+                    colors = ['red' if c < o else 'green' for o, c in zip(df['open'], df['close'])]
+                    fig.add_trace(go.Bar(x=df.index, y=df['volume'], marker_color=colors, name='Volume'), row=curr_row_idx, col=1)
+                    curr_row_idx += 1
                 
-                fig.add_trace(go.Scatter(
-                    x=df.index, 
-                    y=e50, 
-                    fill='tonexty', 
-                    fillcolor='rgba(0, 150, 255, 0.15)', 
-                    line=dict(width=0), 
-                    name='Trend Cloud'
-                ), row=1, col=1)
+                # RSI
+                if 'RSI' in indicators_selected and 'rsi' in df.columns:
+                    fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], line=dict(color='purple', width=2), name='RSI'), row=curr_row_idx, col=1)
+                    fig.add_hline(y=70, line_dash="dash", line_color="red", row=curr_row_idx, col=1)
+                    fig.add_hline(y=30, line_dash="dash", line_color="green", row=curr_row_idx, col=1)
+                    curr_row_idx += 1
+                    
+                # MACD
+                if 'MACD' in indicators_selected and 'macd' in df.columns:
+                    fig.add_trace(go.Scatter(x=df.index, y=df['macd'], line=dict(color='blue', width=1), name='MACD'), row=curr_row_idx, col=1)
+                    fig.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], line=dict(color='orange', width=1), name='Signal'), row=curr_row_idx, col=1)
+                    fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], marker_color='gray', name='Hist'), row=curr_row_idx, col=1)
+                    curr_row_idx += 1
+                    
+                # ADX
+                if 'ADX' in indicators_selected and 'adx' in df.columns:
+                    fig.add_trace(go.Scatter(x=df.index, y=df['adx'], line=dict(color='yellow', width=2), name='ADX'), row=curr_row_idx, col=1)
+                    fig.add_hline(y=25, line_dash="dash", line_color="white", annotation_text="Trend Strength", row=curr_row_idx, col=1)
+                    curr_row_idx += 1
 
-            if "EMA" in indicators_selected:
-                fig.add_trace(go.Scatter(x=df.index, y=df['close'].ewm(span=20).mean(), line=dict(color='orange', width=1), name='EMA 20'), row=1, col=1)
-            
-            if "Bollinger Bands" in indicators_selected:
-                # Simple calculation for display
-                sma = df['close'].rolling(20).mean()
-                std = df['close'].rolling(20).std()
-                upper = sma + (std * 2)
-                lower = sma - (std * 2)
-                fig.add_trace(go.Scatter(x=df.index, y=upper, line=dict(color='gray', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=lower, line=dict(color='gray', width=1, dash='dot'), name='BB Lower'), row=1, col=1)
-
-            # Add Regime Annotation (Background Color)
-            regime_color = "rgba(0, 255, 0, 0.05)" if "Trend" in market_regime else "rgba(255, 165, 0, 0.05)"
-            fig.add_vrect(
-                x0=df.index[0], 
-                x1=df.index[-1],
-                fillcolor=regime_color, 
-                opacity=1, 
-                layer="below", 
-                line_width=0,
-                annotation_text=market_regime, 
-                annotation_position="top left"
-            )
-
-            # Volume
-            curr_row_idx = 2
-            if show_volume:
-                colors = ['red' if c < o else 'green' for o, c in zip(df['open'], df['close'])]
-                fig.add_trace(go.Bar(x=df.index, y=df['volume'], marker_color=colors, name='Volume'), row=curr_row_idx, col=1)
-                curr_row_idx += 1
-            
-            # RSI
-            if 'RSI' in indicators_selected and 'rsi' in df.columns:
-                fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], line=dict(color='purple', width=2), name='RSI'), row=curr_row_idx, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="red", row=curr_row_idx, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="green", row=curr_row_idx, col=1)
-                curr_row_idx += 1
-                
-            # MACD
-            if 'MACD' in indicators_selected and 'macd' in df.columns:
-                fig.add_trace(go.Scatter(x=df.index, y=df['macd'], line=dict(color='blue', width=1), name='MACD'), row=curr_row_idx, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], line=dict(color='orange', width=1), name='Signal'), row=curr_row_idx, col=1)
-                fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], marker_color='gray', name='Hist'), row=curr_row_idx, col=1)
-                curr_row_idx += 1
-                
-            # ADX
-            if 'ADX' in indicators_selected and 'adx' in df.columns:
-                fig.add_trace(go.Scatter(x=df.index, y=df['adx'], line=dict(color='yellow', width=2), name='ADX'), row=curr_row_idx, col=1)
-                fig.add_hline(y=25, line_dash="dash", line_color="white", annotation_text="Trend Strength", row=curr_row_idx, col=1)
-                curr_row_idx += 1
-
-            fig.update_xaxes(
-                showspikes=True, 
-                spikemode='across', 
-                spikesnap='cursor', 
-                showline=True, 
-                showgrid=True, 
-                gridcolor='#333',
-                spikethickness=1,
-                spikecolor='#999999',
-                spikedash='dash'
-            )
-            fig.update_yaxes(
-                showspikes=True, 
-                spikemode='across', 
-                spikesnap='cursor', 
-                showline=True, 
-                showgrid=True, 
-                gridcolor='#333',
-                spikethickness=1,
-                spikecolor='#999999',
-                spikedash='dash'
-            )
-            fig.update_layout(
-                height=800, 
-                xaxis_rangeslider_visible=False, 
-                template="plotly_dark",
-                hovermode='x unified', # Unified hover for better crosshair feel
-                spikedistance=-1 # Show spike across full chart
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                fig.update_xaxes(
+                    showspikes=True, 
+                    spikemode='across', 
+                    spikesnap='cursor', 
+                    showline=True, 
+                    showgrid=True, 
+                    gridcolor='#333',
+                    spikethickness=1,
+                    spikecolor='#999999',
+                    spikedash='dash'
+                )
+                fig.update_yaxes(
+                    showspikes=True, 
+                    spikemode='across', 
+                    spikesnap='cursor', 
+                    showline=True, 
+                    showgrid=True, 
+                    gridcolor='#333',
+                    spikethickness=1,
+                    spikecolor='#999999',
+                    spikedash='dash'
+                )
+                fig.update_layout(
+                    height=800, 
+                    xaxis_rangeslider_visible=False, 
+                    template="plotly_dark",
+                    hovermode='x unified', # Unified hover for better crosshair feel
+                    spikedistance=-1 # Show spike across full chart
+                )
+                st.plotly_chart(fig, use_container_width=True)
             
         # --- Signal Panel ---
         with col_signal:
+            st.subheader("🤖 Auto-Pilot")
+            
+            # Sync with session state / bot state
+            is_running = False
+            if hasattr(bot, 'auto_trader'):
+                is_running = bot.auto_trader.is_running
+            
+            # Use session state to track the toggle, but sync with bot state on load
+            # key="auto_trader_toggle_dash"
+            
+            auto_trading_enabled = st.checkbox("Enable Auto-Trading", value=is_running, key="auto_trader_toggle_dash", help="Automatically execute trades based on signals")
+            
+            if auto_trading_enabled and not is_running:
+                if hasattr(bot, 'auto_trader'):
+                    bot.auto_trader.start()
+                    st.toast("Auto-Trader Started", icon="🤖")
+                    time.sleep(0.5)
+                    st.rerun()
+            elif not auto_trading_enabled and is_running:
+                if hasattr(bot, 'auto_trader'):
+                    bot.auto_trader.stop()
+                    st.toast("Auto-Trader Stopped", icon="🛑")
+                    time.sleep(0.5)
+                    st.rerun()
+            
+            if auto_trading_enabled:
+                st.caption("⚠️ System Active")
+            
+            st.divider()
+            
             st.subheader("Decision Authority")
             
             current_price = df['close'].iloc[-1]
@@ -1217,6 +1992,11 @@ if page_nav == "Trading Terminal":
                             st.error(f"Order Failed: {result.get('error')}")
                         else:
                             st.success(f"Order Placed Successfully! ID: {result.get('id')}")
+                            
+                            # Cache wallet balances after trade
+                            if hasattr(bot, 'wallet_balances'):
+                                st.session_state[f"wallet_cache_{exchange}_v10"] = bot.wallet_balances
+                                
                             st.json(result)
                             # Log action
                             if 'transparency_log' in st.session_state:
@@ -1229,27 +2009,84 @@ if page_nav == "Trading Terminal":
         
         # Fetch Depth
         try:
-            depth = bot.data_manager.exchange.fetch_order_book(symbol, limit=10) if bot.data_manager.exchange else {'bids': [], 'asks': []}
-            
+            # Check capabilities
+            if hasattr(bot.data_manager.exchange, 'fetch_order_book'):
+                depth = bot.data_manager.exchange.fetch_order_book(symbol, limit=10)
+            else:
+                depth = {'bids': [], 'asks': []}
+        except Exception as e:
+            # Retry without credentials if API Key is invalid (Fallback to Public View)
+            if "Invalid Api-Key ID" in str(e) or "-2008" in str(e):
+                try:
+                    # Temporarily clear keys to fetch public data
+                    old_key = bot.data_manager.exchange.apiKey
+                    old_secret = bot.data_manager.exchange.secret
+                    bot.data_manager.exchange.apiKey = None
+                    bot.data_manager.exchange.secret = None
+                    
+                    depth = bot.data_manager.exchange.fetch_order_book(symbol, limit=10)
+                    
+                    # Restore keys (so user still sees the error warning below)
+                    bot.data_manager.exchange.apiKey = old_key
+                    bot.data_manager.exchange.secret = old_secret
+                    
+                    st.warning("⚠️ Invalid API Key: Showing public market data only. Trading disabled.")
+                except Exception as retry_e:
+                    depth = {'bids': [], 'asks': []}
+                    st.error(f"⚠️ Invalid API Key & Public Fetch Failed: {retry_e}")
+            else:
+                depth = {'bids': [], 'asks': []}
+                # Raise to outer block to handle connection errors
+                raise e
+
+        try:
             d_col1, d_col2 = st.columns(2)
             with d_col1:
                 st.markdown("#### Bids (Buy)")
-                if depth['bids']:
+                if depth.get('bids'):
                     bids_df = pd.DataFrame(depth['bids'], columns=['Price', 'Amount'])
-                    st.dataframe(bids_df, height=300)
+                    st.dataframe(bids_df, height=300, use_container_width=True)
                 else:
                     st.info("No Bids")
             
             with d_col2:
                 st.markdown("#### Asks (Sell)")
-                if depth['asks']:
+                if depth.get('asks'):
                     asks_df = pd.DataFrame(depth['asks'], columns=['Price', 'Amount'])
-                    st.dataframe(asks_df, height=300)
+                    st.dataframe(asks_df, height=300, use_container_width=True)
                 else:
                     st.info("No Asks")
                     
         except Exception as e:
-            st.warning(f"Could not fetch order book: {e}")
+            error_msg = str(e)
+            if "getaddrinfo failed" in error_msg or "Connection aborted" in error_msg:
+                st.error("⚠️ Connection Error: Cannot reach API. Check your internet or Proxy settings.")
+            elif "Invalid Api-Key ID" in error_msg:
+                 st.error("⚠️ Invalid API Key detected. Please check your credentials in the 'Exchange Manager' sidebar.")
+                 st.caption("Note: Ensure you are using keys for Binance.com (Global). Binance.US keys will not work on Global.")
+            else:
+                st.warning(f"Could not fetch order book: {e}")
+                
+            # Debug Info
+            if hasattr(bot.data_manager.exchange, 'urls'):
+                urls = bot.data_manager.exchange.urls
+                urls_str = str(urls)
+                is_override_active = False
+                public_url = "Unknown"
+                
+                # Try to extract specific public URL for clearer debug
+                if isinstance(urls, dict) and 'api' in urls:
+                    if isinstance(urls['api'], dict):
+                        public_url = urls['api'].get('public', 'Unknown')
+                    elif isinstance(urls['api'], str):
+                        public_url = urls['api']
+                
+                if exchange == 'bybit':
+                    is_override_active = 'bytick' in urls_str
+                elif exchange == 'binance':
+                    is_override_active = 'api-gcp' in urls_str or 'api1.binance' in urls_str
+                
+                st.caption(f"Debug: API Connection | Override: {is_override_active} | Host: {public_url}")
 
 if page_nav == "Arbitrage Scanner":
     st.title("⚡ Cross-Exchange Arbitrage Scanner")

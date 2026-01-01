@@ -200,6 +200,114 @@ class MeanReversionStrategy(Strategy):
              )
         return None
 
+class WeightedSignalStrategy(Strategy):
+    """
+    Weighted Ensemble Strategy (RSI, MACD, EMA).
+    Incorporates user-provided signal engine logic.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Weighted Ensemble"
+        self.params = {"weights": {"rsi": 0.3, "macd": 0.3, "ema": 0.4}}
+
+    def compute_features(self, df):
+        try:
+            from ta.momentum import RSIIndicator
+            from ta.trend import MACD
+            from ta.volatility import BollingerBands
+            
+            df = df.copy()
+            # RSI
+            df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+            # MACD
+            macd = MACD(close=df["close"], window_slow=26, window_fast=12, window_sign=9)
+            df["macd"] = macd.macd()
+            df["macd_signal"] = macd.macd_signal()
+            # BB
+            bb = BollingerBands(close=df["close"], window=20, window_dev=2)
+            df["bb_high"] = bb.bollinger_hband()
+            df["bb_low"] = bb.bollinger_lband()
+            # ATR
+            df["atr"] = (df["high"] - df["low"]).rolling(14).mean()
+            # EMA
+            df["ema_fast"] = df["close"].ewm(span=12).mean()
+            df["ema_slow"] = df["close"].ewm(span=26).mean()
+            return df
+        except ImportError:
+            # Fallback to bot's analyzer (pandas_ta) if ta lib missing
+            print("Warning: 'ta' library not found. Using internal analyzer.")
+            return self.bot.analyzer.calculate_indicators(df)
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=100)
+        if df.empty: return None
+        
+        df = self.compute_features(df)
+        row = df.iloc[-1]
+        
+        # Signal Logic
+        w = self.params.get("weights", {"rsi": 0.3, "macd": 0.3, "ema": 0.4})
+        
+        # Safe access with default 0/50
+        rsi = row.get("rsi", 50)
+        macd_val = row.get("macd", 0)
+        macd_sig = row.get("macd_signal", 0)
+        ema_fast = row.get("ema_fast", 0)
+        ema_slow = row.get("ema_slow", 0)
+        
+        rsi_sig = 1 if rsi < 30 else (-1 if rsi > 70 else 0)
+        macd_sig = 1 if (macd_val > macd_sig) else -1
+        ema_sig = 1 if (ema_fast > ema_slow) else -1
+        
+        raw_score = w["rsi"]*rsi_sig + w["macd"]*macd_sig + w["ema"]*ema_sig
+        
+        # Confidence calibration with volatility
+        vol = row.get("atr", 0) or 1e-6
+        # Normalize vol for confidence (simple heuristic)
+        conf = max(0.0, min(1.0, abs(raw_score))) # Simplified from user code to avoid tiny vol issues
+        
+        signal_type = "hold"
+        if raw_score > 0.3:
+            signal_type = "buy"
+        elif raw_score < -0.3:
+            signal_type = "sell"
+            
+        if signal_type != 'hold':
+             decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': conf,
+                'market_regime': 'Trending' if abs(raw_score) > 0.5 else 'Range',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": row['close'],
+                "stop_loss": 0,
+                "take_profit": 0,
+                "risk_percent": 1.0,
+                "execution_score": abs(raw_score)
+             }
+             
+             # Apply Risk Management
+             decision_packet = self.apply_risk_management(decision_packet, df)
+
+             self.bot.log_trade(decision_packet)
+             
+             return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=row['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=f"Weighted Score: {raw_score:.2f}",
+                indicators={'rsi': rsi, 'macd': macd_val, 'ema_diff': ema_fast - ema_slow},
+                score=raw_score * 10,
+                regime='Trending',
+                liquidity_status='Normal',
+                confidence=conf,
+                decision_details=decision_packet
+             )
+        return None
+
 class FundingArbitrageStrategy(Strategy):
     """
     Funding Arbitrage Strategy.

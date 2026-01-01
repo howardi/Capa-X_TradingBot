@@ -4,15 +4,18 @@ pandas>=2.0.0
 numpy>=1.24.0
 ccxt>=4.0.0
 yfinance>=0.2.0
-pandas_ta>=0.3.14b0
+./vendor/pandas_ta
 plotly>=5.18.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+PyYAML>=6.0
+dash>=2.14.0
+websockets>=12.0
 # AI/ML Stack
-torch>=2.0.0
-tensorflow>=2.14.0
-stable-baselines3>=2.1.0
-transformers>=4.35.0
+# torch>=2.0.0
+# tensorflow>=2.14.0
+# stable-baselines3>=2.1.0
+# transformers>=4.35.0
 scikit-learn>=1.3.0
 statsmodels>=0.14.0
 pyportfolioopt>=1.5.5

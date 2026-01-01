@@ -7,13 +7,13 @@ import hmac
 import time
 import struct
 import base64
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 
 class SessionManager:
     def __init__(self, data_dir="data/users"):
         self.data_dir = data_dir
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir, exist_ok=True)
         self.sessions_file = os.path.join(self.data_dir, "sessions.json")
         self.sessions = {}
         self._load_sessions()
@@ -299,6 +299,40 @@ class AuthManager:
         self._save_users()
         return True, "Password updated successfully"
 
+    def save_api_keys(self, username, exchange, api_key, api_secret):
+        """
+        Save API keys for a user. 
+        WARNING: Stored in plain text in local JSON. Use with caution.
+        """
+        if username in self.users:
+            if 'api_keys' not in self.users[username]:
+                self.users[username]['api_keys'] = {}
+            
+            self.users[username]['api_keys'][exchange] = {
+                'api_key': api_key,
+                'api_secret': api_secret
+            }
+            self._save_users()
+            return True
+        return False
+
+    def get_api_keys(self, username, exchange):
+        """Retrieve API keys for a user and exchange"""
+        if username in self.users:
+            keys = self.users[username].get('api_keys', {}).get(exchange)
+            if keys:
+                return keys['api_key'], keys['api_secret']
+        return None, None
+
+    def delete_api_keys(self, username, exchange):
+        """Remove API keys for a user and exchange"""
+        if username in self.users and 'api_keys' in self.users[username]:
+            if exchange in self.users[username]['api_keys']:
+                del self.users[username]['api_keys'][exchange]
+                self._save_users()
+                return True
+        return False
+
     def update_email(self, username, password, new_email):
         success, _ = self.login_user(username, password)
         if not success:
@@ -532,6 +566,7 @@ class UserManager:
 
     def get_periodic_breakdown(self):
         """Aggregate PnL by Day/Week/Month"""
+        import pandas as pd
         history = self.get_trade_history()
         df = pd.DataFrame(history)
         if df.empty:

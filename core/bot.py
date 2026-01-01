@@ -1,18 +1,18 @@
 
 import time
+# Ensure DNS fix is active
+import core.dns_fix
 from datetime import datetime
 import pandas as pd
 from core.data import DataManager
 from core.analysis import TechnicalAnalysis
 from core.fundamentals import FundamentalAnalysis
 from core.models import Signal
-from core.brain import CapaXBrain
 from core.risk import AdaptiveRiskManager
-from core.quantum import QuantumEngine
 from core.strategies import (
     SmartTrendStrategy, GridTradingStrategy, MeanReversionStrategy, 
     FundingArbitrageStrategy, BasisTradeStrategy, LiquiditySweepStrategy, OrderFlowStrategy,
-    SwingRangeStrategy, SniperStrategy
+    SwingRangeStrategy, SniperStrategy, WeightedSignalStrategy
 )
 from core.arbitrage import ArbitrageScanner
 from core.sentiment import SentimentEngine
@@ -20,12 +20,13 @@ from core.execution import ExecutionEngine
 from core.security import SecurityManager
 from core.defi import DeFiManager
 from core.alerts import NotificationManager
-from core.ai import PortfolioOptimizer, DriftDetector
-from core.ai_optimizer import AITrainer
-from core.allocator import ProfitOptimizer
-from core.ml_predictor import EnsemblePredictor
 from core.feature_store import FeatureStore
 from core.compliance import ComplianceManager
+from core.auto_trader import AutoTrader
+# Keep ProfitOptimizer lightweight import or lazy load if possible.
+# But it is used in __init__. Let's import it but check if it's heavy.
+# It imports pandas and numpy. Not too heavy.
+from core.allocator import ProfitOptimizer 
 from config.settings import DEFAULT_SYMBOL, DEFAULT_TIMEFRAME
 
 import json
@@ -36,9 +37,15 @@ class TradingBot:
         self.data_manager = DataManager(exchange_id)
         self.analyzer = TechnicalAnalysis()
         self.fundamentals = FundamentalAnalysis()
-        self.brain = CapaXBrain()
+        
+        # Lazy Loading for Heavy Modules
+        self._brain = None
+        self._quantum = None
+        self._portfolio_opt = None
+        self._drift_detector = None
+        self._ai_trainer = None
+        
         self.risk_manager = AdaptiveRiskManager()
-        self.quantum = QuantumEngine()
         self.security = SecurityManager()
         
         # New Modules
@@ -47,15 +54,15 @@ class TradingBot:
         self.execution = ExecutionEngine(self)
         self.defi = DeFiManager()
         self.notifications = NotificationManager()
-        self.portfolio_opt = PortfolioOptimizer()
         self.feature_store = FeatureStore()
         self.compliance = ComplianceManager(self)
-        self.drift_detector = DriftDetector()
-        self.ai_trainer = AITrainer(self)
         
         self.is_running = False
         self.symbol = DEFAULT_SYMBOL
         self.timeframe = DEFAULT_TIMEFRAME
+        
+        # Auto-Trading Engine (CapaXBot Logic)
+        self.auto_trader = AutoTrader(self)
         self.trading_mode = 'Demo' # Default to Demo
         self.last_trade_time = None
         self.trade_log_file = "trade_log.json"
@@ -70,6 +77,9 @@ class TradingBot:
         }
         self.load_positions()
         
+        # Wallet State
+        self.wallet_balances = [] # Stores detailed asset breakdown (List of dicts)
+        
         # Initialize Strategies
         self.strategies = {
             "Smart Trend": SmartTrendStrategy(self),
@@ -80,7 +90,8 @@ class TradingBot:
             "Basis Trade": BasisTradeStrategy(self),
             "Liquidity Sweep": LiquiditySweepStrategy(self),
             "Order Flow": OrderFlowStrategy(self),
-            "Swing Range": SwingRangeStrategy(self)
+            "Swing Range": SwingRangeStrategy(self),
+            "Weighted Ensemble": WeightedSignalStrategy(self)
         }
         self.active_strategy_name = "Smart Trend"
         self.active_strategy = self.strategies[self.active_strategy_name]
@@ -88,6 +99,41 @@ class TradingBot:
         # Initialize Profit Optimizer (Contextual Multi-Armed Bandit)
         self.profit_optimizer = ProfitOptimizer(list(self.strategies.keys()))
         
+    @property
+    def brain(self):
+        if self._brain is None:
+            from core.brain import CapaXBrain
+            self._brain = CapaXBrain()
+        return self._brain
+
+    @property
+    def quantum(self):
+        if self._quantum is None:
+            from core.quantum import QuantumEngine
+            self._quantum = QuantumEngine()
+        return self._quantum
+
+    @property
+    def portfolio_opt(self):
+        if self._portfolio_opt is None:
+            from core.ai import PortfolioOptimizer
+            self._portfolio_opt = PortfolioOptimizer()
+        return self._portfolio_opt
+
+    @property
+    def drift_detector(self):
+        if self._drift_detector is None:
+            from core.ai import DriftDetector
+            self._drift_detector = DriftDetector()
+        return self._drift_detector
+
+    @property
+    def ai_trainer(self):
+        if self._ai_trainer is None:
+            from core.ai_optimizer import AITrainer
+            self._ai_trainer = AITrainer(self)
+        return self._ai_trainer
+
     @property
     def open_positions(self):
         """Return the list of positions for the active trading mode"""
@@ -139,7 +185,7 @@ class TradingBot:
         valid_modes = ['Demo', 'CEX_Proxy', 'CEX_Direct', 'DEX']
         
         if mode in valid_modes:
-            print(f"🔄 Switching Trading Mode: {self.trading_mode} -> {mode}")
+            print(f"[INFO] Switching Trading Mode: {self.trading_mode} -> {mode}")
             self.trading_mode = mode
             
             # 1. Configure Risk Manager Mode
@@ -150,7 +196,9 @@ class TradingBot:
             if mode == 'CEX_Proxy':
                 self.data_manager.set_proxy_mode(use_proxy=True)
             elif mode == 'CEX_Direct':
-                self.data_manager.set_proxy_mode(use_proxy=False)
+                # Use proxy if configured in settings (Critical for restricted regions)
+                # If no proxy is set in settings, this has no effect.
+                self.data_manager.set_proxy_mode(use_proxy=True)
             elif mode == 'DEX':
                 # DEX Logic (might not need DataManager proxy change, but let's default to no proxy for RPC)
                 # Unless RPC requires it? Usually not.
@@ -172,6 +220,9 @@ class TradingBot:
 
     def sync_live_balance(self):
         """Fetch real balance from exchange/chain and update risk manager"""
+        # Ensure wallet_balances exists and is reset
+        self.wallet_balances = []
+        
         try:
             if self.trading_mode == 'DEX':
                 # Fetch Wallet Balance via DeFi Manager
@@ -198,20 +249,320 @@ class TradingBot:
                         # For now, let's update with 0 if price is missing to be safe
                         self.risk_manager.update_live_balance(0.0) 
                 else:
-                    print("⚠️ No Wallet Loaded for DEX Mode")
+                    print("[WARN] No Wallet Loaded for DEX Mode")
             
             elif self.trading_mode in ['CEX_Proxy', 'CEX_Direct']:
-                balance = self.data_manager.get_balance()
-                # Try USDT first, then USD
-                usdt_bal = balance.get('USDT', {}).get('total', 0.0)
-                if usdt_bal == 0.0:
-                     usdt_bal = balance.get('USD', {}).get('total', 0.0)
+                print("DEBUG: Fetching balance from DataManager...")
                 
+                # Debug Log File
+                with open("debug_wallet_log.txt", "w", encoding='utf-8') as f:
+                    f.write(f"[{datetime.now()}] Starting Sync\n")
+                    if self.data_manager.offline_mode:
+                        f.write("WARNING: DataManager is in Offline Mode! Balance data is fake/mock.\n")
+
+                # 1. Fetch Default Balance (Unified/Spot)
+                try:
+                    balance = self.data_manager.get_balance()
+                    
+                    # STRICT CHECK: Ensure 'total' exists (Critical for correct parsing)
+                    if balance and 'total' not in balance:
+                         print("[WARN] Spot balance missing 'total' field. Retrying once...")
+                         balance = self.data_manager.get_balance(force_refresh=True)
+                         
+                    with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                        f.write(f"Spot Balance Keys: {list(balance.keys())}\n")
+                        # Log raw structure for debugging
+                        f.write(f"Raw Balance Type: {type(balance)}\n")
+                        if balance:
+                            f.write(f"Raw Balance Sample: {str(balance)[:500]}...\n")
+                        
+                        # DEBUG: Inspect specific assets requested by user
+                        target_assets = ['HMSTR', 'LDPEPE', 'PIXEL', 'SOL', 'USDT', 'BTC']
+                        f.write("\n--- Target Asset Inspection ---\n")
+                        for asset in target_assets:
+                            if asset in balance:
+                                f.write(f"Asset: {asset}\n")
+                                f.write(f"  Value: {balance[asset]}\n")
+                                f.write(f"  Type: {type(balance[asset])}\n")
+                            else:
+                                f.write(f"Asset: {asset} NOT FOUND in keys.\n")
+                        f.write("-----------------------------\n")
+
+                        if 'total' in balance:
+                            f.write(f"Spot Total Dict found. Items: {len(balance['total'])}\n")
+                        else:
+                            f.write("Spot 'total' Dict NOT found.\n")
+                            
+                except Exception as e:
+                    error_str = str(e)
+                    with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                        f.write(f"ERROR Fetching Spot: {error_str}\n")
+                    
+                    # STRICT ERROR HANDLING: Check for Invalid API Key (-2008)
+                    if "-2008" in error_str or "Invalid Api-Key ID" in error_str:
+                        print("\n[CRITICAL] INVALID API KEY DETECTED (-2008)")
+                        print("Stopping Sync. Invalidating Credentials.")
+                        
+                        # Invalidate in DataManager
+                        if self.data_manager.exchange:
+                            self.data_manager.exchange.apiKey = None
+                            self.data_manager.exchange.secret = None
+                        
+                        raise Exception("CRITICAL_API_ERROR: -2008 Invalid Api-Key ID. Credentials have been invalidated. Please re-enter them.")
+                        
+                    # Stop sync on any API error (Strict Mode)
+                    raise e
+
+                print(f"DEBUG: Balance fetched. Keys: {list(balance.keys())[:5]}")
+                
+                # 2. Fetch Funding Wallet (Strict Mode)
+                try:
+                    print("DEBUG: Fetching Funding Wallet...")
+                    funding_balance = self.data_manager.exchange.fetch_balance({'type': 'funding'})
+                    if funding_balance and 'total' in funding_balance:
+                        # Merge into main balance logic or append
+                        # For now, let's merge the 'total' dicts if we want unified view, 
+                        # but user might want separation. The UI expects a flat list in wallet_balances.
+                        # We will process it similar to Spot.
+                        print(f"DEBUG: Funding Balance Fetched. Items: {len(funding_balance['total'])}")
+                        
+                        for currency, amount in funding_balance['total'].items():
+                            if amount and float(amount) > 0:
+                                # Check if already exists from Spot (to avoid duplicates or merge?)
+                                # Strategy: Add as separate entry with type 'Funding'
+                                self.wallet_balances.append({
+                                    'asset': currency,
+                                    'free': float(funding_balance.get('free', {}).get(currency, 0)),
+                                    'locked': float(funding_balance.get('used', {}).get(currency, 0)),
+                                    'total': float(amount),
+                                    'value_usd': 0.0, # Will be calculated later
+                                    'source': 'Funding'
+                                })
+                except Exception as e:
+                    print(f"[ERROR] Failed to fetch Funding Wallet: {e}")
+                    # Strict Mode: Stop sync on any failure as requested
+                    raise Exception(f"Funding Wallet Sync Failed: {e}")
+
+                # 3. Fetch Earn/Flexible (Often in Spot as LD*, but sometimes separate)
+                # We already handle LD* in Spot. Let's try explicit 'earn' endpoint if available
+                # Binance often uses 'sapi' endpoints for this which CCXT might map to specific methods.
+                # For now, we rely on Spot LD* + Funding. 
+                
+                # Store detailed balances for UI
+                # self.wallet_balances is already being populated above for Funding.
+                # Now process Spot (balance variable)
+                
+                # Robust extraction of balances (Method A: 'total' dict)
+                assets_found = set()
+                
+                if 'total' in balance:
+                    for currency, amount in balance['total'].items():
+                        try:
+                            # User Request: Show zero balances too.
+                            # So we extract everything present in the 'total' dict.
+                            # We only filter if amount is None or invalid type.
+                            if amount is not None:
+                                assets_found.add(currency)
+                                # Handle Binance Earn (LD Prefix)
+                                display_asset = currency
+                                source_tag = 'Spot'
+                                if currency.startswith('LD'):
+                                    display_asset = f"{currency[2:]}"
+                                    source_tag = 'Earn (Flexible)'
+                                
+                                free_val = 0.0
+                                locked_val = 0.0
+                                
+                                try:
+                                    free_val = float(balance.get('free', {}).get(currency, 0))
+                                    locked_val = float(balance.get('used', {}).get(currency, 0))
+                                except:
+                                    pass
+
+                                self.wallet_balances.append({
+                                    'asset': display_asset,
+                                    'total': float(amount),
+                                    'free': free_val,
+                                    'locked': locked_val
+                                })
+                        except Exception as e:
+                             with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                                f.write(f"ERROR parsing asset {currency}: {e}\n")
+
+                # Method B: Iterate over 'free' dict if 'total' missed some or didn't exist
+                if 'free' in balance:
+                    for currency, amount in balance['free'].items():
+                        try:
+                            if currency not in assets_found and amount is not None:
+                                # Calculate total if possible
+                                free = float(amount)
+                                used = float(balance.get('used', {}).get(currency, 0.0))
+                                total = free + used
+                                
+                                assets_found.add(currency)
+                                display_asset = currency
+                                if currency.startswith('LD'):
+                                    display_asset = f"{currency[2:]} (Earn)"
+                                
+                                self.wallet_balances.append({
+                                    'asset': display_asset,
+                                    'total': total,
+                                    'free': free,
+                                    'locked': used
+                                })
+                        except Exception as e:
+                             with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                                f.write(f"ERROR parsing free asset {currency}: {e}\n")
+
+
+                # Method C: Iterate over root keys (for assets that act as objects, e.g. balance['BTC'] = {'free':...})
+                # This handles cases where 'total' aggregate dict is missing but individual asset keys exist
+                for currency, data in balance.items():
+                    if currency in ['info', 'free', 'used', 'total', 'timestamp', 'datetime']:
+                        continue
+                    if currency in assets_found:
+                        continue
+                    
+                    if isinstance(data, dict):
+                        try:
+                            # Relaxed filter: Allow 0 balances
+                            total = float(data.get('total', 0.0))
+                            
+                            assets_found.add(currency)
+                            display_asset = currency
+                            if currency.startswith('LD'):
+                                display_asset = f"{currency[2:]} (Earn)"
+                            
+                            self.wallet_balances.append({
+                                'asset': display_asset,
+                                'total': total,
+                                'free': float(data.get('free', 0.0)),
+                                'locked': float(data.get('used', 0.0))
+                            })
+                        except:
+                            pass
+                
+                # Log Found Assets to Debug File
+                with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                    f.write(f"\n--- Extracted Assets ({len(self.wallet_balances)}) ---\n")
+                    # Log first 20 and last 20 if too many
+                    log_items = self.wallet_balances if len(self.wallet_balances) < 50 else self.wallet_balances[:20] + self.wallet_balances[-20:]
+                    for item in log_items:
+                        f.write(f"{item['asset']}: {item['total']} (Free: {item['free']}, Locked: {item['locked']})\n")
+                    if len(self.wallet_balances) >= 50:
+                        f.write(f"... and {len(self.wallet_balances) - 40} more ...\n")
+
+                # Fallback for Bybit V5 Unified if CCXT 'total' is empty/incomplete
+                if not self.wallet_balances and self.data_manager.exchange_id == 'bybit':
+                    try:
+                        raw = balance.get('info', {})
+                        if raw.get('retCode') == 0:
+                            acct_list = raw.get('result', {}).get('list', [])
+                            if acct_list:
+                                coins = acct_list[0].get('coin', [])
+                                for c in coins:
+                                    w_bal = float(c.get('walletBalance', 0))
+                                    if w_bal > 0:
+                                        self.wallet_balances.append({
+                                            'asset': c.get('coin'),
+                                            'total': w_bal,
+                                            'free': float(c.get('availableToWithdraw', w_bal)),
+                                            'locked': float(c.get('locked', 0))
+                                        })
+                    except Exception as parse_err:
+                        print(f"Bybit raw balance parse failed: {parse_err}")
+
+                # Try to get Equity from different possible keys
+                usdt_bal = 0.0
+                if balance:
+                    usdt_bal = balance.get('USDT', {}).get('total', 0.0)
+                    
+                    # Check for LDUSDT (Binance Earn) and treat as liquid
+                    ld_usdt = balance.get('LDUSDT', {}).get('total', 0.0)
+                    if ld_usdt > 0:
+                         usdt_bal += ld_usdt
+                         print(f"Added LDUSDT (Earn) to Total Equity: {ld_usdt}")
+    
+                    if usdt_bal == 0.0:
+                         usdt_bal = balance.get('USD', {}).get('total', 0.0)
+                
+                # UTA Check: If CCXT parsing missed it, check raw 'info'
+                if usdt_bal == 0.0 and balance and 'info' in balance:
+                    try:
+                        # Bybit V5 UTA structure: result -> list -> [0] -> totalEquity
+                        info = balance.get('info')
+                        if isinstance(info, dict) and 'result' in info:
+                             result = info['result']
+                             if isinstance(result, dict) and 'list' in result:
+                                 account_list = result['list']
+                                 if account_list and len(account_list) > 0:
+                                     equity = float(account_list[0].get('totalEquity', 0.0))
+                                     if equity > 0:
+                                         usdt_bal = equity
+                                         print(f"Found UTA Equity: {equity}")
+                    except Exception as e:
+                        print(f"UTA Parsing Error: {e}")
+
+                # 2. Fetch Funding Wallet (Logic moved to top of block)
+                # Removed duplicate block
+
+                # 3. Fetch Binance Earn (Simple Earn Flexible)
+                if self.data_manager.exchange_id == 'binance':
+                    try:
+                        with open("debug_wallet_log.txt", "a") as f:
+                             f.write("Attempting Binance Earn (Flexible) fetch...\n")
+                        
+                        # Use raw fetch via implicit API if method wrapper missing
+                        # Endpoint: GET /sapi/v1/simple-earn/flexible/position
+                        earn_data = None
+                        if hasattr(self.data_manager.exchange, 'sapi_get_simple_earn_flexible_position'):
+                            earn_data = self.data_manager.exchange.sapi_get_simple_earn_flexible_position()
+                        
+                        if earn_data:
+                            rows = []
+                            if isinstance(earn_data, dict) and 'rows' in earn_data:
+                                rows = earn_data['rows']
+                            elif isinstance(earn_data, list):
+                                rows = earn_data
+                                
+                            with open("debug_wallet_log.txt", "a") as f:
+                                f.write(f"Earn Rows Found: {len(rows)}\n")
+
+                            for pos in rows:
+                                asset = pos.get('asset')
+                                amount = float(pos.get('totalAmount', 0.0))
+                                if amount > 0:
+                                    self.wallet_balances.append({
+                                        'asset': f"{asset} (Earn)",
+                                        'total': amount,
+                                        'free': amount, # Flexible is liquid-ish
+                                        'locked': 0.0
+                                    })
+                                    
+                                    # Add to USDT Equity if USDT
+                                    if asset == 'USDT':
+                                        usdt_bal += amount
+                                        
+                    except Exception as earn_e:
+                        # Strict Mode: Report Earn failure
+                        print(f"[ERROR] Earn Fetch Failed: {earn_e}")
+                        # Strict Mode: Stop sync on any failure as requested
+                        raise Exception(f"Earn Wallet Sync Failed: {earn_e}")
+
                 self.risk_manager.update_live_balance(usdt_bal)
                 print(f"Synced Live Balance ({self.trading_mode}): ${usdt_bal:.2f}")
                 
         except Exception as e:
-            print(f"Failed to sync live balance: {e}")
+            print(f"[ERROR] Failed to sync live balance: {e}")
+            
+            # Re-raise to ensure UI catches critical errors (like -2008)
+            # Extra check: If -2008, ensure we strip credentials in bot instance too if data_manager missed it
+            if "-2008" in str(e) or "Invalid Api-Key ID" in str(e):
+                 if self.data_manager and self.data_manager.exchange:
+                     self.data_manager.exchange.apiKey = None
+                     self.data_manager.exchange.secret = None
+            
+            raise e
 
     def set_strategy(self, strategy_name):
         if strategy_name == "Meta-Allocator" or strategy_name in self.strategies:
@@ -349,6 +700,10 @@ class TradingBot:
                     # Retrieve regime from position if stored, else Unknown
                     regime = position.get('regime', 'Unknown')
                     self.profit_optimizer.update(position['strategy'], pnl, regime)
+                
+                # Sync Balance if in Live Mode to reflect realized PnL
+                if self.trading_mode in ['CEX_Proxy', 'CEX_Direct']:
+                     self.sync_live_balance()
                     
                 # Log Close (Simplified)
                 # self.log_trade({...}) # Ideally log the close event too
@@ -441,73 +796,56 @@ class TradingBot:
         self.is_running = False
         print("Capa-X System Deactivated...")
 
-    def emergency_stop(self):
-        print("🚨 EMERGENCY STOP TRIGGERED 🚨")
-        self.is_running = False
+    def run(self):
+        """
+        Main Trading Loop
+        """
+        self.start()
+        print(f"[*] Trading Bot Started in {self.trading_mode} Mode on {self.symbol}")
         
-        # Iterate over all modes to ensure everything is closed
-        for mode in ['Live', 'Simulation']:
-            # Get positions directly from dictionary to ensure we have the list
-            positions = self.positions.get(mode, [])
-            
-            # Iterate over a copy to safely modify the list
-            for position in positions[:]:
-                symbol = position['symbol']
-                bias = position['type']
-                entry = position['entry']
+        while self.is_running:
+            try:
+                # 1. Sync Balance
+                if self.trading_mode != 'Demo':
+                    self.sync_live_balance()
                 
-                # Close Position Logic
-                if mode == 'Live':
-                    # Determine side to close
-                    side = 'sell' if str(bias).upper() == 'BUY' else 'buy'
-                    amount = float(position.get('position_size', 0))
+                # 2. Run Analysis
+                signal = self.run_analysis()
+                
+                # 3. Execute Signal
+                if signal and signal.type in ['buy', 'sell']:
+                    print(f"[*] Signal Generated: {signal.type.upper()} {self.symbol} @ {signal.price}")
                     
-                    if amount > 0:
-                        print(f"Executing LIVE Emergency Close: {symbol} {side} {amount}")
-                        # Execute Market Order to close immediately
-                        self.execution.execute_smart_order(symbol, side, amount, strategy='market')
-                
-                # Fetch current price for PnL log (Informational)
-                try:
-                    ticker = self.data_manager.fetch_ticker(symbol)
-                    current_price = ticker['last']
-                except:
-                    current_price = entry 
-                
-                pnl = 0.0
-                pnl_amount = 0.0
-                pos_size = float(position.get('position_size', 0))
-                
-                if bias == 'BUY':
-                    pnl = (current_price - entry) / entry
-                    pnl_amount = (current_price - entry) * pos_size
-                elif bias == 'SELL':
-                    pnl = (entry - current_price) / entry
-                    pnl_amount = (entry - current_price) * pos_size
+                    # Prepare Execution Packet
+                    packet = {
+                        "symbol": self.symbol,
+                        "bias": signal.type.upper(),
+                        "entry": signal.price,
+                        "stop_loss": signal.decision_details.get('stop_loss', 0),
+                        "take_profit": signal.decision_details.get('take_profit', 0),
+                        "position_size": signal.decision_details.get('position_size', 0),
+                        "strategy": self.active_strategy_name,
+                        "confidence": signal.strength,
+                        "decision": "EXECUTE",
+                        "market_regime": signal.decision_details.get('regime', 'Unknown')
+                    }
                     
-                print(f"🚨 Emergency Close ({mode}): {symbol} {bias} | PnL: {pnl:.2%} (${pnl_amount:.2f})")
+                    # Execute Trade
+                    result = self.execution.execute_order(packet)
+                    
+                    if result and result.get('status') == 'FILLED':
+                        self.log_trade(packet)
+                        print(f"[+] Trade Executed: {packet['bias']} {packet['symbol']}")
                 
-                # Update Risk Manager Balance
-                self.risk_manager.update_metrics(pnl_amount=pnl_amount, last_trade_result='win' if pnl_amount > 0 else 'loss', capital_released=entry*pos_size)
+                # 4. Sleep (Poll Interval)
+                time.sleep(60)
                 
-                # Log closure
-                self.log_trade({
-                    'decision': 'EMERGENCY_CLOSE',
-                    'bias': 'FLAT',
-                    'strategy': 'Kill Switch',
-                    'symbol': symbol,
-                    'entry': entry,
-                    'exit_price': current_price,
-                    'pnl': pnl,
-                    'mode': mode
-                })
-            
-            # Clear positions for this mode
-            self.positions[mode] = []
-            
-        self.save_positions()
-        
-        # Sync Risk Manager
-        self.risk_manager.open_positions = []
-        
-        return True
+            except KeyboardInterrupt:
+                self.stop()
+                break
+            except Exception as e:
+                print(f"[!] Error in Trading Loop: {e}")
+                import traceback
+                traceback.print_exc()
+                time.sleep(10)
+

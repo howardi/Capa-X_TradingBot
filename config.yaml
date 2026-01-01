@@ -1,0 +1,16 @@
+exchange: binance
+api_key: "YOUR_API_KEY"
+secret: "YOUR_SECRET"
+sandbox: true
+symbols: ["BTC/USDT", "ETH/USDT"]
+timeframe: "1m"
+min_confidence: 0.65
+equity: 10000
+risk:
+  risk_per_trade: 0.005
+  stop_atr_mult: 2.0
+  tp_atr_mult: 3.0
+  max_drawdown: 0.10
+execution:
+  slippage_bps: 10
+portfolio: {}

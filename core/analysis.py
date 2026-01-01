@@ -1,6 +1,13 @@
 
 import pandas as pd
-import pandas_ta as ta
+try:
+    import pandas_ta as ta
+except ImportError:
+    try:
+        import pandas_ta_classic as ta
+    except ImportError:
+        print("Warning: pandas_ta not found. Technical Analysis modules may fail.")
+        ta = None
 from config.settings import RSI_PERIOD, RSI_OVERBOUGHT, RSI_OVERSOLD
 
 class TechnicalAnalysis:
@@ -31,6 +38,10 @@ class TechnicalAnalysis:
             df = df.sort_index()
 
         # Trend Indicators
+        if ta is None:
+            print("Warning: pandas_ta not initialized. Skipping indicator calculation.")
+            return df
+
         # MACD
         macd = df.ta.macd(fast=12, slow=26, signal=9)
         if macd is not None:

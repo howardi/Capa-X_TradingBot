@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import logging
 
-# Graceful imports for heavy ML libraries
+# Re-enable imports as this module is now lazy-loaded
 try:
     import torch
     import torch.nn as nn
