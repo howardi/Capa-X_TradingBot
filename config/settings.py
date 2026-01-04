@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # Load Environment Variables
 load_dotenv()
 
-APP_NAME = "Capa-X"
+APP_NAME = "CapacityBay"
 VERSION = "1.1.0"
 
 # --- Exchange API Keys ---

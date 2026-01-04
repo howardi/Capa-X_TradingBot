@@ -352,8 +352,8 @@ def cyberpunk_logo(logo_path=os.path.join("assets", "logo.png")):
             border-radius: 50%;
             margin-bottom: 20px;
             box-shadow: 0 0 30px rgba(0, 242, 255, 0.5);
-            display: flex; align-items: center; justify-content: center; font-size: 40px;
-        ">🦅</div>
+            display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: bold; color: white; font-family: 'Inter', sans-serif;
+        ">CB</div>
         """
         text_html = """
         <h1 style="
@@ -363,7 +363,7 @@ def cyberpunk_logo(logo_path=os.path.join("assets", "logo.png")):
             letter-spacing: -2px;
             margin: 0;
             text-shadow: 0 0 20px rgba(0, 242, 255, 0.5);
-        ">CAPA-X</h1>
+        ">CapacityBay</h1>
         """
 
     st.markdown(f"""
@@ -377,6 +377,6 @@ def cyberpunk_logo(logo_path=os.path.join("assets", "logo.png")):
             text-transform: uppercase;
             font-size: 0.8rem;
             opacity: 0.8;
-        ">Quantum Trading Intelligence</p>
+        ">Communicate | Collaborate | Create</p>
     </div>
     """, unsafe_allow_html=True)
