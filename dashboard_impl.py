@@ -1489,35 +1489,42 @@ if page_nav == "Trading Dashboard":
                     
                     if sym_trades:
                         t_df = pd.DataFrame(sym_trades)
-                        # Ensure timestamp is datetime and match timezone if needed
-                        # Assuming trade timestamp is local/matching chart index
-                        # If chart index is tz-aware, we might need conversion
                         
-                        # Buys
-                        buys = t_df[t_df['side'] == 'buy']
-                        if not buys.empty:
-                            fig.add_trace(go.Scatter(
-                                x=buys['timestamp'], # Assumes timestamp exists in trade dict
-                                y=buys['price'],
-                                mode='markers',
-                                marker=dict(symbol='triangle-up', size=18, color='#00FF00', line=dict(width=2, color='white')),
-                                name='Executed BUY',
-                                hovertemplate='BUY %{y:.2f}<br>Qty: %{text}',
-                                text=buys['qty']
-                            ), row=1, col=1)
+                        # Normalize 'side' column (handle 'type' vs 'side' mismatch)
+                        if 'side' not in t_df.columns and 'type' in t_df.columns:
+                            t_df['side'] = t_df['type']
+                        
+                        # Ensure 'side' exists and normalize to lowercase
+                        if 'side' in t_df.columns:
+                            t_df['side'] = t_df['side'].astype(str).str.lower()
                             
-                        # Sells
-                        sells = t_df[t_df['side'] == 'sell']
-                        if not sells.empty:
-                            fig.add_trace(go.Scatter(
-                                x=sells['timestamp'],
-                                y=sells['price'],
-                                mode='markers',
-                                marker=dict(symbol='triangle-down', size=18, color='#FF0000', line=dict(width=2, color='white')),
-                                name='Executed SELL',
-                                hovertemplate='SELL %{y:.2f}<br>Qty: %{text}',
-                                text=sells['qty']
-                            ), row=1, col=1)
+                            # Buys
+                            buys = t_df[t_df['side'] == 'buy']
+                            if not buys.empty:
+                                fig.add_trace(go.Scatter(
+                                    x=buys.get('timestamp', [buys.index[0]] * len(buys) if not buys.empty else []), # Fallback if timestamp missing
+                                    y=buys['entry'] if 'entry' in buys.columns else buys.get('price', []),
+                                    mode='markers',
+                                    marker=dict(symbol='triangle-up', size=18, color='#00FF00', line=dict(width=2, color='white')),
+                                    name='Executed BUY',
+                                    hovertemplate='BUY %{y:.2f}<br>Qty: %{text}',
+                                    text=buys.get('qty', buys.get('position_size', ['N/A']*len(buys)))
+                                ), row=1, col=1)
+                                
+                            # Sells
+                            sells = t_df[t_df['side'] == 'sell']
+                            if not sells.empty:
+                                fig.add_trace(go.Scatter(
+                                    x=sells.get('timestamp', [sells.index[0]] * len(sells) if not sells.empty else []),
+                                    y=sells['entry'] if 'entry' in sells.columns else sells.get('price', []),
+                                    mode='markers',
+                                    marker=dict(symbol='triangle-down', size=18, color='#FF0000', line=dict(width=2, color='white')),
+                                    name='Executed SELL',
+                                    hovertemplate='SELL %{y:.2f}<br>Qty: %{text}',
+                                    text=sells.get('qty', sells.get('position_size', ['N/A']*len(sells)))
+                                ), row=1, col=1)
+                        else:
+                            st.warning("Trade history format incompatible (missing 'side' or 'type').")
 
                 # Add Indicators to Main Chart
                 if show_quantum:
