@@ -27,7 +27,11 @@ EXCHANGES = {
     'binance': {
         'apiKey': os.getenv('BINANCE_API_KEY', ''),
         'secret': os.getenv('BINANCE_SECRET', ''),
-        'options': {'defaultType': 'spot'},
+        'options': {
+            'defaultType': 'spot',
+            'adjustForTimeDifference': True,
+            'recvWindow': 60000,
+        },
         'enableRateLimit': True,
     },
     'kraken': {

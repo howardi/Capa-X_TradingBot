@@ -2,6 +2,7 @@
 import ccxt
 import pandas as pd
 import logging
+import time
 
 try:
     import yfinance as yf
@@ -97,6 +98,12 @@ class DataManager:
         if 'timeout' not in config:
             config['timeout'] = 15000 # 15 seconds
 
+        # Fix Timestamp Error (-1021) by auto-syncing time
+        # This applies to all exchanges (Binance, Bybit, etc.)
+        if 'options' not in config:
+            config['options'] = {}
+        config['options']['adjustForTimeDifference'] = True
+
         # FORCE OVERRIDE for Bybit to bypass DNS blocks
         if exchange_id == 'bybit':
             # 1. Set hostname (CCXT uses this to replace {hostname} in templates)
@@ -172,11 +179,41 @@ class DataManager:
                     exchange.urls = replace_urls(exchange.urls)
                     print("[INFO] Post-Init: Replaced all bybit.com URLs with bytick.com")
                 
-                # NUCLEAR OPTION: Post-Init Force Replace for Binance
-                # REMOVED: Since we are using standard domain and user has VPN, we don't need to force replace everything.
-                # This reduces the risk of breaking specific endpoints like SAPI/Funding.
+                # --- AUTO-CORRECT TIME DRIFT ---
                 if exchange_id == 'binance':
-                    print("[INFO] Post-Init: Keeping standard Binance URLs (VPN Mode)")
+                    try:
+                         # Calculate drift using public time endpoint
+                         # We use a raw request to avoid auth signing issues
+                         print("[INFO] Checking Binance Time Drift...")
+                         server_time = exchange.fetch_time()
+                         local_time = int(time.time() * 1000)
+                         drift = local_time - server_time
+                         
+                         print(f"[INFO] Time Drift: {drift} ms (Positive = Local Ahead)")
+                         
+                         if abs(drift) > 1000:
+                             print(f"[WARN] Significant time drift detected ({drift} ms). Applying fix.")
+                             
+                             # Fix 1: Set timeDifference explicitly for CCXT
+                             # If local is ahead (drift > 0), we need to subtract drift.
+                             # CCXT subtracts timeDifference if adjustForTimeDifference is True.
+                             exchange.options['adjustForTimeDifference'] = True
+                             
+                             # Fix 2: Monkey-patch milliseconds() if drift is positive (Local Ahead)
+                             # This is required because recvWindow doesn't fix "ahead" errors.
+                             if drift > 500:
+                                 # We set a safe offset to ensure we are strictly "behind" server time
+                                 # e.g. server_time - 2000ms
+                                 # local_time - safe_offset = server_time - 2000
+                                 # safe_offset = local_time - server_time + 2000 = drift + 2000
+                                 safe_offset = drift + 2000
+                                 
+                                 original_milliseconds = exchange.milliseconds
+                                 exchange.milliseconds = lambda: original_milliseconds() - safe_offset
+                                 print(f"[INFO] Applied Monkey-Patch to exchange.milliseconds() with offset -{safe_offset} ms")
+                                 
+                    except Exception as e:
+                        print(f"[WARN] Failed to auto-correct time drift: {e}")
                 
                 return exchange
             else:

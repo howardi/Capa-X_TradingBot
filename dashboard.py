@@ -2,6 +2,15 @@ import streamlit as st
 import traceback
 import os
 import sys
+import importlib
+
+# Force reload of core modules to ensure updates are picked up
+# This fixes issues where exec() uses cached modules with missing attributes
+try:
+    import core.styles
+    importlib.reload(core.styles)
+except ImportError:
+    pass
 
 # Import settings for page title
 try:
@@ -9,8 +18,8 @@ try:
 except ImportError:
     APP_NAME = "Capa-X"
 
-# Set page config must be the first Streamlit command
-st.set_page_config(page_title=APP_NAME, layout="wide")
+# Set page config moved to dashboard_impl.py for better control
+# st.set_page_config(page_title=APP_NAME, layout="wide")
 
 def main():
     try:

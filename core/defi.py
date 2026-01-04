@@ -72,6 +72,51 @@ class DeFiManager:
         self.current_chain = chain
         self.audit_records = []  # Local storage for on-chain audit logs
         
+        # Router Addresses (Uniswap V2 / PancakeSwap / QuickSwap)
+        self.ROUTERS = {
+            'ethereum': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', # Uniswap V2
+            'bsc': '0x10ED43C718714eb63d5aA57B78B54704E256024E',      # PancakeSwap
+            'polygon': '0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff',  # QuickSwap
+            'avalanche': '0x60aE616a2155Ee3d9A68541Ba4544862310933d4' # Trader Joe
+        }
+
+        # Common Token Addresses (Simplified Map)
+        self.TOKEN_MAP = {
+            'ethereum': {
+                'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+                'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+                'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+                'ETH': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' # Placeholder for Native
+            },
+            'bsc': {
+                'USDT': '0x55d398326f99059fF775485246999027B3197955',
+                'USDC': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+                'WBNB': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+                'BNB': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+            },
+            'polygon': {
+                'USDT': '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+                'USDC': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+                'WMATIC': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+                'MATIC': '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
+            }
+        }
+        
+        # ABIs
+        self.ERC20_ABI = [
+            {"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"},
+            {"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},
+            {"constant":False,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"},
+            {"constant":True,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"type":"function"}
+        ]
+        
+        self.ROUTER_ABI = [
+            {"inputs":[{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactETHForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"payable","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForETH","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"}],"name":"getAmountsOut","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"view","type":"function"}
+        ]
+
         self.connect_to_chain(chain)
             
         if private_key:
@@ -208,7 +253,9 @@ class DeFiManager:
             {"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"}
         ]
         
-        target = wallet_address if wallet_address else self.account.address
+        target = wallet_address if wallet_address else (self.account.address if hasattr(self.account, 'address') else None)
+        if not target: return 0.0
+        
         try:
             contract = self.w3.eth.contract(address=self.w3.to_checksum_address(token_address), abi=abi)
             balance = contract.functions.balanceOf(target).call()
@@ -218,13 +265,72 @@ class DeFiManager:
             print(f"Error fetching token balance: {e}")
             return 0.0
 
+    def get_swap_quote(self, token_in: str, token_out: str, amount: float) -> float:
+        """
+        Get estimated output amount for a swap.
+        """
+        chain_type = self.CHAINS[self.current_chain]['type']
+        
+        if chain_type == 'evm':
+            if not self.w3: return 0.0
+            
+            router_address = self.ROUTERS.get(self.current_chain)
+            if not router_address: return 0.0
+            
+            token_map = self.TOKEN_MAP.get(self.current_chain, {})
+            token_in_addr = token_map.get(token_in, token_in)
+            token_out_addr = token_map.get(token_out, token_out)
+            
+            is_native_in = token_in in ['ETH', 'BNB', 'MATIC', 'AVAX']
+            is_native_out = token_out in ['ETH', 'BNB', 'MATIC', 'AVAX']
+            
+            # Determine Path
+            weth_addr = token_map.get('WETH') or token_map.get('WBNB') or token_map.get('WMATIC')
+            path = []
+            
+            if is_native_in:
+                path = [weth_addr, token_out_addr]
+            elif is_native_out:
+                path = [token_in_addr, weth_addr]
+            else:
+                path = [token_in_addr, token_out_addr]
+                
+            # Checksum addresses
+            path = [self.w3.to_checksum_address(a) for a in path]
+            router = self.w3.eth.contract(address=self.w3.to_checksum_address(router_address), abi=self.ROUTER_ABI)
+            
+            decimals_in = 6 if 'USD' in token_in else 18
+            amount_in_wei = int(amount * (10 ** decimals_in))
+            
+            try:
+                amounts = router.functions.getAmountsOut(amount_in_wei, path).call()
+                amount_out_wei = amounts[-1]
+                
+                decimals_out = 6 if 'USD' in token_out else 18
+                return float(amount_out_wei) / (10 ** decimals_out)
+            except Exception as e:
+                print(f"Quote Error: {e}")
+                return 0.0
+                
+        elif chain_type == 'solana':
+            # Simulated Quote
+            return amount * 1.05 # Mock price impact
+            
+        return 0.0
+
     def execute_swap(self, symbol: str, side: str, amount: float):
         """
-        Wrapper for execute_smart_order integration.
-        Parses symbol (e.g. 'ETH/USDT') to token_in/token_out.
+        Execute a swap on the current chain's DEX.
+        Returns transaction details for frontend signing or executes if private key loaded.
         """
         try:
-            base, quote = symbol.split('/')
+            # Determine Token Addresses based on Symbol (e.g., 'ETH/USDT')
+            if '/' in symbol:
+                base, quote = symbol.split('/')
+            else:
+                base, quote = symbol, 'USDT' # Default
+                
+            # Logic to swap Base -> Quote (Sell) or Quote -> Base (Buy)
             if side.lower() == 'buy':
                 token_in = quote
                 token_out = base
@@ -233,37 +339,146 @@ class DeFiManager:
                 token_out = quote
                 
             return self.swap_tokens(token_in, token_out, amount)
+            
         except Exception as e:
+            print(f"Swap Error: {e}")
             return {'status': 'Failed', 'error': str(e)}
 
     def swap_tokens(self, token_in: str, token_out: str, amount: float, slippage: float = 0.5):
         """
         Execute a token swap on the current chain's primary DEX.
-        EVM: Uniswap (ETH), PancakeSwap (BSC), TraderJoe (AVAX)
-        Solana: Raydium / Jupiter
         """
         chain_type = self.CHAINS[self.current_chain]['type']
         print(f"Initiating Swap on {self.current_chain}: {amount} {token_in} -> {token_out}")
         
-        tx_hash = f"0x{hashlib.sha256(str(time.time()).encode()).hexdigest()}"
-        
         if chain_type == 'evm':
-            # EVM Swap Logic (Placeholder for ABI interaction)
-            if self.w3 and self.w3.is_connected():
-                # In real impl: Build tx, sign with self.account, send_raw_transaction
-                self.record_audit_log("swap", f"Swapped {amount} {token_in} for {token_out}")
-                return {"status": "success", "tx_hash": tx_hash}
+            if not self.w3:
+                return {'status': 'Failed', 'error': 'Web3 not initialized'}
+
+            router_address = self.ROUTERS.get(self.current_chain)
+            if not router_address:
+                return {'status': 'Failed', 'error': 'DEX Router not found for this chain'}
+            
+            # Resolve Token Addresses
+            token_map = self.TOKEN_MAP.get(self.current_chain, {})
+            token_in_addr = token_map.get(token_in, token_in) # Use map or assume raw address
+            token_out_addr = token_map.get(token_out, token_out)
+            
+            # Helper to check if native
+            is_native_in = token_in in ['ETH', 'BNB', 'MATIC', 'AVAX']
+            is_native_out = token_out in ['ETH', 'BNB', 'MATIC', 'AVAX']
+            
+            # Decimals (Heuristic for Demo)
+            decimals_in = 6 if 'USD' in token_in else 18
+            amount_wei = int(amount * (10 ** decimals_in))
+            
+            # Setup Contract
+            router_contract = self.w3.eth.contract(address=self.w3.to_checksum_address(router_address), abi=self.ROUTER_ABI)
+            deadline = int(time.time()) + 1200 # 20 mins
+            
+            user_address = self.account.address if self.account else "0x0000000000000000000000000000000000000000" # Placeholder if no backend wallet
+            
+            # 1. Handle Approval for Tokens
+            if not is_native_in:
+                try:
+                    token_contract = self.w3.eth.contract(address=self.w3.to_checksum_address(token_in_addr), abi=self.ERC20_ABI)
+                    allowance = token_contract.functions.allowance(self.w3.to_checksum_address(user_address), self.w3.to_checksum_address(router_address)).call()
+                    
+                    if allowance < amount_wei:
+                        # Construct Approve Transaction
+                        data = token_contract.encodeABI(fn_name="approve", args=[self.w3.to_checksum_address(router_address), 2**256 - 1])
+                        return {
+                            'status': 'Pending_Approve',
+                            'payload': {
+                                'to': token_in_addr,
+                                'value': "0",
+                                'data': data,
+                                'chainId': self.CHAINS[self.current_chain]['id']
+                            },
+                            'message': f'Approval needed for {token_in}. Please sign the approve transaction.'
+                        }
+                except Exception as e:
+                    print(f"Allowance check failed (simulating approval): {e}")
+                    # If backend check fails (e.g. no wallet connected), we might still want to return an approve payload for frontend
+                    pass
+
+            # 2. Construct Swap Transaction
+            path = []
+            try:
+                # WETH/WBNB address needed for path
+                weth_addr = token_map.get('WETH') or token_map.get('WBNB') or token_map.get('WMATIC')
                 
+                # Determine Path
+                if is_native_in:
+                    path = [weth_addr, token_out_addr]
+                elif is_native_out:
+                    path = [token_in_addr, weth_addr]
+                else:
+                    path = [token_in_addr, token_out_addr]
+                
+                # Checksum Path
+                path = [self.w3.to_checksum_address(a) for a in path]
+
+                # Calculate AmountOutMin (Slippage Protection)
+                try:
+                    amounts_out = router_contract.functions.getAmountsOut(amount_wei, path).call()
+                    expected_out = amounts_out[-1]
+                    amount_out_min = int(expected_out * (1 - slippage / 100))
+                    print(f"Slippage Calcs: Expected {expected_out}, Min {amount_out_min} (Slippage {slippage}%)")
+                except Exception as e:
+                    print(f"Error calculating slippage: {e}")
+                    amount_out_min = 0 # Fallback to 0 (risky but allows tx to proceed if view fails)
+
+                if is_native_in:
+                    # swapExactETHForTokens
+                    data = router_contract.encodeABI(fn_name="swapExactETHForTokens", args=[amount_out_min, path, self.w3.to_checksum_address(user_address), deadline])
+                    value = str(amount_wei)
+                elif is_native_out:
+                    # swapExactTokensForETH
+                    data = router_contract.encodeABI(fn_name="swapExactTokensForETH", args=[amount_wei, amount_out_min, path, self.w3.to_checksum_address(user_address), deadline])
+                    value = "0"
+                else:
+                    # swapExactTokensForTokens
+                    data = router_contract.encodeABI(fn_name="swapExactTokensForTokens", args=[amount_wei, amount_out_min, path, self.w3.to_checksum_address(user_address), deadline])
+                    value = "0"
+                    
+                return {
+                    'status': 'Pending_Sign',
+                    'payload': {
+                        'to': router_address,
+                        'value': value,
+                        'data': data,
+                        'chainId': self.CHAINS[self.current_chain]['id']
+                    },
+                    'message': f'Please sign the swap transaction ({amount} {token_in} -> {token_out}).'
+                }
+                
+            except Exception as e:
+                return {'status': 'Failed', 'error': f"Tx Construction Failed: {e}"}
+
         elif chain_type == 'solana':
-            # Solana Swap Logic
-            if SOLANA_AVAILABLE:
-                # In real impl: Construct instruction, sign with Keypair
-                self.record_audit_log("swap", f"Swapped {amount} {token_in} for {token_out}")
-                return {"status": "success", "tx_hash": tx_hash}
-        
-        # Simulation Fallback
-        self.record_audit_log("swap_sim", f"Simulated Swap: {amount} {token_in} -> {token_out}")
-        return {"status": "simulated", "tx_hash": "0xSimulatedHash..."}
+            # Solana Swap Simulation (Jupiter Aggregator style payload)
+            return {
+                'status': 'Pending_Sign',
+                'payload': {
+                    'type': 'solana_transaction',
+                    'instructions': [
+                        {
+                            'programId': 'JUP4Fb2cqi88N462Gzm763...Placeholder',
+                            'data': 'base64_encoded_swap_instruction_data...',
+                            'keys': [
+                                {'pubkey': 'UserWallet...', 'isSigner': True, 'isWritable': True},
+                                {'pubkey': 'TokenInVault...', 'isSigner': False, 'isWritable': True},
+                                # ... more keys
+                            ]
+                        }
+                    ]
+                },
+                'message': f'Please sign the Solana swap ({amount} {token_in} -> {token_out}).'
+            }
+
+        return {'status': 'Failed', 'error': 'Chain type not supported'}
+
 
     def stake_assets(self, protocol: str, amount: float):
         """

@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import time
 from core.bot import TradingBot
+from core.styles import neon_header
 
 class CopyTradingModule:
     def __init__(self):
@@ -30,14 +31,14 @@ class CopyTradingModule:
         return True
         
     def render_ui(self):
-        st.header("👥 Social & Copy Trading Hub")
+        neon_header("Social & Copy Trading Hub", level=1)
         
         tab_leader, tab_follower = st.tabs(["📡 Leaderboard & Signals", "⚙️ Copy Settings"])
         
         with tab_leader:
             st.info("Coming Soon: Global Leaderboard (Requires Cloud Connectivity)")
             
-            st.subheader("Signal Source Simulation")
+            neon_header("Signal Source Simulation", level=2)
             st.markdown("Simulate incoming signals from a Master Trader for testing.")
             
             col1, col2 = st.columns(2)
@@ -51,7 +52,7 @@ class CopyTradingModule:
                     self.execute_copy_trade("BTC/USDT", "sell", 0.001)
 
         with tab_follower:
-            st.subheader("Connect Master Account (Source)")
+            neon_header("Connect Master Account (Source)", level=2)
             st.markdown("Mirror trades from another exchange account (Read-Only API recommended).")
             
             with st.form("master_api_form"):
@@ -66,7 +67,7 @@ class CopyTradingModule:
             
             st.divider()
             
-            st.subheader("Copy Parameters")
+            neon_header("Copy Parameters", level=2)
             copy_mode = st.radio("Copy Mode", ["Fixed Amount", "Percentage Balance", "Proportional"], index=0)
             copy_amt = st.number_input("Amount per Trade (USDT)", min_value=10.0, value=50.0)
             

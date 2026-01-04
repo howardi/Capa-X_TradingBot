@@ -75,6 +75,7 @@ class TradingBot:
             'CEX_Direct': [], 
             'DEX': []
         }
+        self.pending_transactions = [] # For Manual/Web3 Approvals
         self.load_positions()
         
         # Wallet State

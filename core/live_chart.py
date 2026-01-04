@@ -1,6 +1,13 @@
-import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output
+try:
+    import dash
+    from dash import dcc, html
+    from dash.dependencies import Input, Output
+except ImportError:
+    print("CRITICAL ERROR: Dash is not installed. Live Chart cannot start.")
+    print("Please install it using: pip install dash")
+    import sys
+    sys.exit(1)
+
 import plotly.graph_objects as go
 import pandas as pd
 import websockets
