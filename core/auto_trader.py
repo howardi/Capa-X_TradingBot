@@ -200,6 +200,79 @@ class AutoTrader:
         except Exception as e:
             logging.error(f"Error in run_once({symbol}): {e}")
 
+    def monitor_positions(self):
+        """
+        Monitor open positions for SL/TP hits.
+        Acts as a safety net for modes where exchange-side OCO isn't used (like Demo or Simple CEX).
+        """
+        mode = self.bot.trading_mode
+        if mode not in self.bot.positions:
+            return
+
+        positions = self.bot.positions[mode]
+        # Iterate backwards to allow safe removal
+        for i in range(len(positions) - 1, -1, -1):
+            pos = positions[i]
+            symbol = pos['symbol']
+            side = pos['side']
+            sl = pos.get('sl', 0)
+            tp = pos.get('tp', 0)
+            entry = pos.get('entry', 0)
+            
+            # Skip if no SL/TP
+            if not sl and not tp:
+                continue
+                
+            # Get current price
+            # We can use fetch_ticker for fresh data
+            try:
+                ticker = self.ex.fetch_ticker(symbol)
+                if not ticker: continue
+                
+                current_price = ticker['bid'] if side == 'buy' else ticker['ask'] # Conservative price
+                
+                close_reason = None
+                
+                # Check SL
+                if sl > 0:
+                    if side == 'buy' and current_price <= sl:
+                        close_reason = "Stop Loss"
+                    elif side == 'sell' and current_price >= sl:
+                        close_reason = "Stop Loss"
+                        
+                # Check TP
+                if tp > 0:
+                    if side == 'buy' and current_price >= tp:
+                        close_reason = "Take Profit"
+                    elif side == 'sell' and current_price <= tp:
+                        close_reason = "Take Profit"
+                        
+                if close_reason:
+                    logging.info(f"{symbol} hit {close_reason} at {current_price} (Entry: {entry}). Closing...")
+                    
+                    # Execute Close
+                    close_side = 'sell' if side == 'buy' else 'buy'
+                    self.exec.execute_robust(symbol, close_side, pos['qty'], strategy="market")
+                    
+                    # Log
+                    packet = {
+                        "symbol": symbol,
+                        "bias": close_side.upper(),
+                        "entry": entry,
+                        "exit": current_price,
+                        "pnl": (current_price - entry) * pos['qty'] if side == 'buy' else (entry - current_price) * pos['qty'],
+                        "reason": close_reason,
+                        "strategy": "AutoMonitor"
+                    }
+                    self.bot.log_trade(packet)
+                    
+                    # Remove from list
+                    positions.pop(i)
+                    self.bot.save_positions()
+                    
+            except Exception as e:
+                logging.error(f"Error monitoring {symbol}: {e}")
+
     def loop(self):
         """
         Main Loop
@@ -207,11 +280,18 @@ class AutoTrader:
         logging.info("Starting AutoTrader Loop...")
         self.is_running = True
         while self.is_running:
+            # 1. Check for New Trades
             for s in self.symbols:
                 try:
                     self.run_once(s)
                 except Exception as e:
                     logging.exception(f"Error on {s}: {e}")
+            
+            # 2. Monitor Existing Positions (Auto-Close)
+            try:
+                self.monitor_positions()
+            except Exception as e:
+                logging.error(f"Monitor loop error: {e}")
             
             # Sleep logic
             for _ in range(int(self.poll_seconds)):

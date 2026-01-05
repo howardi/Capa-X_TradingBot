@@ -703,7 +703,7 @@
         }
 
         function initDemo(){ const ui=getUI(); document.getElementById('preset-side').value = ui.presetSide; document.getElementById('demo-mode').value = ui.mode; document.getElementById('demo-symbol').value = ui.symbol; document.getElementById('demo-trailing-enabled').checked = !!ui.trailingEnabled; document.getElementById('demo-breakeven-enabled').checked = !!ui.breakevenEnabled; if(ui.trailing!==''){ document.getElementById('demo-trailing').value = ui.trailing; }
-            updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); updateHistoryUI(); setInterval(refreshAllPrices, 10000);
+            updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); updateHistoryUI(); setInterval(refreshAllPrices, 2000); // Faster updates for auto-close
             document.getElementById('demo-buy').onclick = () => { document.getElementById('preset-side').value = 'BUY'; setUI({ presetSide:'BUY' }); clearAlert(); openPosition('BUY'); };
             document.getElementById('demo-sell').onclick = () => { document.getElementById('preset-side').value = 'SELL'; setUI({ presetSide:'SELL' }); clearAlert(); openPosition('SELL'); };
             document.getElementById('demo-reset').onclick = () => { resetDemo(); };
