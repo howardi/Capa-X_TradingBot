@@ -2127,401 +2127,43 @@ if page_nav == "Trading Dashboard":
         
         # --- Chart Section ---
         with col_chart:
-            # Chart Mode Selection
-            chart_mode = st.radio("Chart Source", ["Live WebSocket (Binance)", "Static Analysis (Plotly)"], horizontal=True)
+            # TradingView Widget for robust live data
+            tv_symbol = "BINANCE:BTCUSDT"
+            if symbol == "ETHUSDT": tv_symbol = "BINANCE:ETHUSDT"
+            elif symbol == "BNBUSDT": tv_symbol = "BINANCE:BNBUSDT"
+            elif symbol == "SOLUSDT": tv_symbol = "BINANCE:SOLUSDT"
+            else: tv_symbol = f"BINANCE:{symbol}"
 
-            if chart_mode == "Live WebSocket (Binance)":
-                st.info(f"Streaming live data for {symbol} ({timeframe}) via Binance WebSocket")
-                    
-                # Manage Live Chart Process
-                restart = False
-                if 'live_chart_pid' in st.session_state:
-                    if st.session_state.get('live_chart_symbol') != symbol or st.session_state.get('live_chart_interval') != timeframe:
-                        restart = True
-                else:
-                    restart = True
-                
-                if restart:
-                    if 'live_chart_pid' in st.session_state:
-                        try:
-                            os.kill(st.session_state['live_chart_pid'], signal.SIGTERM)
-                        except:
-                            pass
-                    
-                    # Start new process
-                    cmd = [sys.executable, "core/live_chart.py", "--symbol", symbol, "--interval", timeframe, "--port", "8050"]
-                    # CREATE_NO_WINDOW = 0x08000000
-                    creation_flags = 0x08000000 if sys.platform == 'win32' else 0
-                    
-                    proc = subprocess.Popen(cmd, cwd=os.getcwd(), creationflags=creation_flags)
-                    
-                    st.session_state['live_chart_pid'] = proc.pid
-                    st.session_state['live_chart_symbol'] = symbol
-                    st.session_state['live_chart_interval'] = timeframe
-                    
-                    time.sleep(2) # Wait for server to start
-                    
-                    # Check if process died immediately
-                    if proc.poll() is not None:
-                        st.error(f"Live Chart process failed to start (Exit Code: {proc.returncode}). Please check console logs.")
-                        if 'live_chart_pid' in st.session_state:
-                            del st.session_state['live_chart_pid']
-                    else:
-                        st.rerun()
-                
-                components.iframe("http://localhost:8050", height=800)
-            
-            else:
-                # Prepare data for Static Chart (Calculate Indicators)
-                df = raw_df.copy()
-                df = bot.analyzer.calculate_indicators(df)
+            # Map timeframe to TradingView interval
+            tv_interval_map = {
+                '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+                '1h': '60', '2h': '120', '4h': '240', '1d': 'D'
+            }
+            tv_interval = tv_interval_map.get(timeframe, '60')
 
-                # Cleanup Live Chart Process if it exists
-                if 'live_chart_pid' in st.session_state:
-                    try:
-                        os.kill(st.session_state['live_chart_pid'], signal.SIGTERM)
-                        del st.session_state['live_chart_pid']
-                        print("Stopped Live Chart process.")
-                    except:
-                        pass
-                
-                # Chart Controls
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    show_volume = st.checkbox("Show Volume", value=True)
-                with c2:
-                    indicators_selected = st.multiselect("Indicators", ["RSI", "MACD", "Bollinger Bands", "EMA", "ADX", "Trend Cloud", "SuperTrend"], default=["EMA", "SuperTrend"])
-                with c3:
-                    chart_type = st.selectbox("Chart Type", ["Candlestick", "Line", "Heikin Ashi"], index=0)
-                    show_zones = st.checkbox("Show Bull/Bear Zones", value=True)
-                    show_quantum = st.checkbox("🔮 Quantum Forecast", value=False)
-
-                # Construct Plotly Figure
-                subplot_titles = [f"{symbol} Price ({timeframe}) - {market_regime} Regime"]
-                row_h = [0.6]
-                specs = [[{"secondary_y": False}]]
-                
-                current_row = 2
-                
-                if show_volume:
-                    subplot_titles.append("Volume")
-                    specs.append([{"secondary_y": False}])
-                    row_h.append(0.15)
-                    current_row += 1
-                
-                if 'RSI' in indicators_selected:
-                    subplot_titles.append("RSI (14)")
-                    specs.append([{"secondary_y": False}])
-                    row_h.append(0.15)
-                    current_row += 1
-                    
-                if 'MACD' in indicators_selected:
-                    subplot_titles.append("MACD")
-                    specs.append([{"secondary_y": False}])
-                    row_h.append(0.15)
-                    current_row += 1
-                
-                # Normalize row heights
-                total_h = sum(row_h)
-                row_h = [h/total_h for h in row_h]
-
-                fig = make_subplots(
-                    rows=current_row - 1, 
-                    cols=1, 
-                    shared_xaxes=True, 
-                    vertical_spacing=0.05, 
-                    row_heights=row_h,
-                    subplot_titles=subplot_titles
-                )
-
-                # Main Candlestick
-                fig.add_trace(go.Candlestick(
-                    x=df.index, 
-                    open=df['open'], 
-                    high=df['high'], 
-                    low=df['low'], 
-                    close=df['close'], 
-                    name='OHLC'
-                ), row=1, col=1)
-
-                # Bull/Bear Zones Visualization
-                if show_zones:
-                    # Determine Trend Source
-                    trend_col = None
-                    if 'supertrend_dir' in df.columns:
-                        trend_col = 'supertrend_dir' # 1 or -1
-                    elif 'close' in df.columns:
-                        # Fallback to simple SMA trend if no SuperTrend
-                        df['sma_50'] = df['close'].rolling(50).mean()
-                        df['trend_proxy'] = np.where(df['close'] > df['sma_50'], 1, -1)
-                        trend_col = 'trend_proxy'
-                    
-                    if trend_col:
-                        # Identify segments to avoid thousands of vrects
-                        # We create a new column 'segment_id' that changes when trend changes
-                        df['segment_id'] = (df[trend_col] != df[trend_col].shift(1)).cumsum()
-                        
-                        # Group by segment
-                        # Fix: Ensure index is available for aggregation by creating a temporary column
-                        df['ts_agg'] = df.index
-                        segments = df.groupby('segment_id').agg(
-                            start_time=('ts_agg', 'first'),
-                            end_time=('ts_agg', 'last'),
-                            trend=(trend_col, 'first')
-                        )
-                        
-                        # Plot Rectangles
-                        for _, seg in segments.iterrows():
-                            color = "rgba(0, 255, 0, 0.1)" if seg['trend'] == 1 else "rgba(255, 0, 0, 0.1)"
-                            fig.add_vrect(
-                                x0=seg['start_time'], 
-                                x1=seg['end_time'],
-                                fillcolor=color, 
-                                opacity=1, 
-                                layer="below", 
-                                line_width=0
-                            )
-
-                # SuperTrend & Live Signal Markers
-                if "SuperTrend" in indicators_selected and 'supertrend' in df.columns:
-                    # Plot SuperTrend Line
-                    # We can color it dynamically if we split the series, but a single line is safer for performance
-                    fig.add_trace(go.Scatter(
-                        x=df.index, 
-                        y=df['supertrend'], 
-                        mode='lines',
-                        line=dict(color='magenta', width=2),
-                        name='SuperTrend'
-                    ), row=1, col=1)
-                    
-                    # Generate Buy/Sell Markers from SuperTrend Crossovers
-                    if 'supertrend_dir' in df.columns:
-                        # Detect flips
-                        # 1 = Bullish, -1 = Bearish
-                        # Buy: Previous was -1, Current is 1
-                        # Sell: Previous was 1, Current is -1
-                        
-                        # We need to operate on the series
-                        st_dir = df['supertrend_dir']
-                        st_shift = st_dir.shift(1)
-                        
-                        buy_mask = (st_dir == 1) & (st_shift == -1)
-                        sell_mask = (st_dir == -1) & (st_shift == 1)
-                        
-                        buy_points = df[buy_mask]
-                        sell_points = df[sell_mask]
-                        
-                        if not buy_points.empty:
-                            fig.add_trace(go.Scatter(
-                                x=buy_points.index,
-                                y=buy_points['low'] * 0.995, # Just below low
-                                mode='markers+text',
-                                marker=dict(symbol='triangle-up', size=15, color='#00ff9d'),
-                                text=["BUY"] * len(buy_points),
-                                textposition="bottom center",
-                                name='Buy Signal'
-                            ), row=1, col=1)
-                            
-                        if not sell_points.empty:
-                            fig.add_trace(go.Scatter(
-                                x=sell_points.index,
-                                y=sell_points['high'] * 1.005, # Just above high
-                                mode='markers+text',
-                                marker=dict(symbol='triangle-down', size=15, color='#ff0055'),
-                                text=["SELL"] * len(sell_points),
-                                textposition="top center",
-                                name='Sell Signal'
-                            ), row=1, col=1)
-
-                # Plot Actual Executed Trades (Live from Bot)
-                executed_trades = bot.positions.get(bot.trading_mode, [])
-                if executed_trades:
-                    # Filter for current symbol
-                    sym_trades = [t for t in executed_trades if t['symbol'] == symbol]
-                    
-                    if sym_trades:
-                        t_df = pd.DataFrame(sym_trades)
-                        
-                        # Normalize 'side' column (handle 'type' vs 'side' mismatch)
-                        if 'side' not in t_df.columns and 'type' in t_df.columns:
-                            t_df['side'] = t_df['type']
-                        
-                        # Ensure 'side' exists and normalize to lowercase
-                        if 'side' in t_df.columns:
-                            t_df['side'] = t_df['side'].astype(str).str.lower()
-                            
-                            # Buys
-                            buys = t_df[t_df['side'] == 'buy']
-                            if not buys.empty:
-                                fig.add_trace(go.Scatter(
-                                    x=buys.get('timestamp', [buys.index[0]] * len(buys) if not buys.empty else []), # Fallback if timestamp missing
-                                    y=buys['entry'] if 'entry' in buys.columns else buys.get('price', []),
-                                    mode='markers',
-                                    marker=dict(symbol='triangle-up', size=18, color='#00ff9d', line=dict(width=2, color='white')),
-                                    name='Executed BUY',
-                                    hovertemplate='BUY %{y:.2f}<br>Qty: %{text}',
-                                    text=buys.get('qty', buys.get('position_size', ['N/A']*len(buys)))
-                                ), row=1, col=1)
-                
-                        # Sells
-                        sells = t_df[t_df['side'] == 'sell']
-                        if not sells.empty:
-                            fig.add_trace(go.Scatter(
-                                x=sells.get('timestamp', [sells.index[0]] * len(sells) if not sells.empty else []),
-                                y=sells['entry'] if 'entry' in sells.columns else sells.get('price', []),
-                                mode='markers',
-                                marker=dict(symbol='triangle-down', size=18, color='#ff0055', line=dict(width=2, color='white')),
-                                name='Executed SELL',
-                                hovertemplate='SELL %{y:.2f}<br>Qty: %{text}',
-                                text=sells.get('qty', sells.get('position_size', ['N/A']*len(sells)))
-                            ), row=1, col=1)
-                        else:
-                            st.warning("Trade history format incompatible (missing 'side' or 'type').")
-
-                # Add Indicators to Main Chart
-                if show_quantum:
-                    try:
-                        # Calculate volatility
-                        returns = df['close'].pct_change().dropna()
-                        vol = returns.std() if not returns.empty else 0.01
-                        # Annualize approx or just use period vol
-                        # For hourly simulation steps
-                        
-                        current_price = df['close'].iloc[-1]
-                        
-                        # Generate paths
-                        paths = bot.quantum.generate_probability_wave(current_price, vol, steps=24, paths=30)
-                        
-                        # Create future dates
-                        last_date = df.index[-1]
-                        # Handle different index types (datetime vs range)
-                        try:
-                            future_dates = [last_date + pd.Timedelta(hours=i+1) for i in range(24)]
-                        except:
-                            future_dates = [i for i in range(24)] # Fallback
-                        
-                        for path in paths:
-                            # path includes current price as first element? generate_probability_wave returns list starting with current?
-                            # Let's check logic: yes, prices = [current_price], then appends.
-                            # So len is steps + 1
-                            
-                            fig.add_trace(go.Scatter(
-                                x=[last_date] + future_dates,
-                                y=path, # path has steps+1 elements
-                                mode='lines',
-                                line=dict(color='#00f2ff', width=1),
-                                opacity=0.05,
-                                showlegend=False,
-                                hoverinfo='skip'
-                            ), row=1, col=1)
-                    except Exception as e:
-                        st.error(f"Quantum Viz Error: {e}")
-
-                if "Trend Cloud" in indicators_selected:
-                    # EMA Cloud (20-50) for Visual Trend
-                    e20 = df['close'].ewm(span=20).mean()
-                    e50 = df['close'].ewm(span=50).mean()
-                    
-                    # We need two traces for the fill
-                    fig.add_trace(go.Scatter(
-                        x=df.index, 
-                        y=e20, 
-                        line=dict(width=0), 
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ), row=1, col=1)
-                    
-                    fig.add_trace(go.Scatter(
-                        x=df.index, 
-                        y=e50, 
-                        fill='tonexty', 
-                        fillcolor='rgba(0, 242, 255, 0.15)', 
-                        line=dict(width=0), 
-                        name='Trend Cloud'
-                    ), row=1, col=1)
-
-                if "EMA" in indicators_selected:
-                    fig.add_trace(go.Scatter(x=df.index, y=df['close'].ewm(span=20).mean(), line=dict(color='#ffaa00', width=1), name='EMA 20'), row=1, col=1)
-                
-                if "Bollinger Bands" in indicators_selected:
-                    # Simple calculation for display
-                    sma = df['close'].rolling(20).mean()
-                    std = df['close'].rolling(20).std()
-                    upper = sma + (std * 2)
-                    lower = sma - (std * 2)
-                    fig.add_trace(go.Scatter(x=df.index, y=upper, line=dict(color='#475569', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=df.index, y=lower, line=dict(color='#475569', width=1, dash='dot'), name='BB Lower'), row=1, col=1)
-
-                # Add Regime Annotation (Background Color)
-                regime_color = "rgba(0, 255, 157, 0.05)" if "Trend" in market_regime else "rgba(255, 170, 0, 0.05)"
-                fig.add_vrect(
-                    x0=df.index[0], 
-                    x1=df.index[-1],
-                    fillcolor=regime_color, 
-                    opacity=1, 
-                    layer="below", 
-                    line_width=0,
-                    annotation_text=market_regime, 
-                    annotation_position="top left"
-                )
-
-                # Volume
-                curr_row_idx = 2
-                if show_volume:
-                    colors = ['#ff0055' if c < o else '#00ff9d' for o, c in zip(df['open'], df['close'])]
-                    fig.add_trace(go.Bar(x=df.index, y=df['volume'], marker_color=colors, name='Volume'), row=curr_row_idx, col=1)
-                    curr_row_idx += 1
-                
-                # RSI
-                if 'RSI' in indicators_selected and 'rsi' in df.columns:
-                    fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], line=dict(color='#bd00ff', width=2), name='RSI'), row=curr_row_idx, col=1)
-                    fig.add_hline(y=70, line_dash="dash", line_color="#ff0055", row=curr_row_idx, col=1)
-                    fig.add_hline(y=30, line_dash="dash", line_color="#00ff9d", row=curr_row_idx, col=1)
-                    curr_row_idx += 1
-                    
-                # MACD
-                if 'MACD' in indicators_selected and 'macd' in df.columns:
-                    fig.add_trace(go.Scatter(x=df.index, y=df['macd'], line=dict(color='#00f2ff', width=1), name='MACD'), row=curr_row_idx, col=1)
-                    fig.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], line=dict(color='#ffaa00', width=1), name='Signal'), row=curr_row_idx, col=1)
-                    fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], marker_color='#475569', name='Hist'), row=curr_row_idx, col=1)
-                    curr_row_idx += 1
-                    
-                # ADX
-                if 'ADX' in indicators_selected and 'adx' in df.columns:
-                    fig.add_trace(go.Scatter(x=df.index, y=df['adx'], line=dict(color='yellow', width=2), name='ADX'), row=curr_row_idx, col=1)
-                    fig.add_hline(y=25, line_dash="dash", line_color="white", annotation_text="Trend Strength", row=curr_row_idx, col=1)
-                    curr_row_idx += 1
-
-                fig.update_xaxes(
-                    showspikes=True, 
-                    spikemode='across', 
-                    spikesnap='cursor', 
-                    showline=True, 
-                    showgrid=True, 
-                    gridcolor='#333',
-                    spikethickness=1,
-                    spikecolor='#999999',
-                    spikedash='dash'
-                )
-                fig.update_yaxes(
-                    showspikes=True, 
-                    spikemode='across', 
-                    spikesnap='cursor', 
-                    showline=True, 
-                    showgrid=True, 
-                    gridcolor='#333',
-                    spikethickness=1,
-                    spikecolor='#999999',
-                    spikedash='dash'
-                )
-                fig.update_layout(
-                    height=800, 
-                    xaxis_rangeslider_visible=False, 
-                    template="plotly_dark",
-                    hovermode='x unified', # Unified hover for better crosshair feel
-                    spikedistance=-1 # Show spike across full chart
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # Create the HTML for the widget
+            html_code = f"""
+            <!-- TradingView Widget BEGIN -->
+            <div class="tradingview-widget-container" style="height:800px;width:100%">
+              <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+              {{
+              "autosize": true,
+              "symbol": "{tv_symbol}",
+              "interval": "{tv_interval}",
+              "timezone": "Etc/UTC",
+              "theme": "dark",
+              "style": "1",
+              "locale": "en",
+              "enable_publishing": false,
+              "allow_symbol_change": true,
+              "support_host": "https://www.tradingview.com"
+            }}
+              </script>
+            </div>
+            <!-- TradingView Widget END -->
+            """
+            components.html(html_code, height=800)
             
         # --- Signal Panel ---
         with col_signal:
