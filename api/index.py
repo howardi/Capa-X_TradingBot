@@ -11,16 +11,61 @@ template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'template
 app = Flask(__name__, template_folder=template_dir, static_folder='static')
 
 def get_price(symbol='BTCUSDT'):
-    for i in range(3):
+    symbol = symbol.upper()
+    
+    # 1. Try Binance.com
+    for i in range(2):
         try:
-            url = f'https://api.binance.com/api/v3/ticker/price?symbol={symbol.upper()}'
-            response = requests.get(url, timeout=3)
+            url = f'https://api.binance.com/api/v3/ticker/price?symbol={symbol}'
+            response = requests.get(url, timeout=2)
             response.raise_for_status()
             data = response.json()
             return float(data['price'])
         except:
-            if i == 2: return 0.0
-            time.sleep(0.2)
+            time.sleep(0.1)
+
+    # 2. Try Binance.US (Good for US servers)
+    try:
+        url = f'https://api.binance.us/api/v3/ticker/price?symbol={symbol}'
+        response = requests.get(url, timeout=2)
+        response.raise_for_status()
+        data = response.json()
+        return float(data['price'])
+    except:
+        pass
+
+    # 3. Try CoinGecko (Mapping needed)
+    try:
+        cg_map = {'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'BNBUSDT': 'binancecoin'}
+        cg_id = cg_map.get(symbol)
+        if cg_id:
+            url = f'https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd'
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            data = response.json()
+            if cg_id in data and 'usd' in data[cg_id]:
+                return float(data[cg_id]['usd'])
+    except:
+        pass
+
+    # 4. Try Kraken (Mapping needed)
+    try:
+        k_map = {'BTCUSDT': 'XBTUSD', 'ETHUSDT': 'ETHUSD'}
+        pair = k_map.get(symbol)
+        if pair:
+            url = f'https://api.kraken.com/0/public/Ticker?pair={pair}'
+            response = requests.get(url, timeout=2)
+            response.raise_for_status()
+            data = response.json()
+            if 'result' in data:
+                # Kraken returns a dictionary with the pair name as key (which might differ slightly from request)
+                # We iterate to find the first key
+                key = list(data['result'].keys())[0]
+                # 'c' is the last trade closed array, first element is price
+                return float(data['result'][key]['c'][0])
+    except:
+        pass
+
     return 0.0
 
 # Helper to get Bitcoin Price (Lightweight)
