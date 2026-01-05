@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import traceback
+import time
 from datetime import datetime
 
 # Robust template folder resolution for Vercel
@@ -10,13 +11,17 @@ template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'template
 app = Flask(__name__, template_folder=template_dir, static_folder='static')
 
 def get_price(symbol='BTCUSDT'):
-    try:
-        url = f'https://api.binance.com/api/v3/ticker/price?symbol={symbol.upper()}'
-        response = requests.get(url, timeout=2)
-        data = response.json()
-        return float(data['price'])
-    except:
-        return 0.0
+    for i in range(3):
+        try:
+            url = f'https://api.binance.com/api/v3/ticker/price?symbol={symbol.upper()}'
+            response = requests.get(url, timeout=3)
+            response.raise_for_status()
+            data = response.json()
+            return float(data['price'])
+        except:
+            if i == 2: return 0.0
+            time.sleep(0.2)
+    return 0.0
 
 # Helper to get Bitcoin Price (Lightweight)
 def get_btc_price():

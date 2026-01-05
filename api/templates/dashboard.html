@@ -18,6 +18,15 @@
         .table tbody tr:hover { color: white; background-color: #363945; }
         .btn-primary { background-color: #ff4b4b; border-color: #ff4b4b; }
         .btn-primary:hover { background-color: #ff3333; border-color: #ff3333; }
+        @media (max-width: 768px) {
+            .metric-value { font-size: 1.5em; }
+            .card-body { padding: 1rem; }
+            .btn { width: 100%; margin-bottom: 0.5rem; }
+            .navbar-text { flex-direction: column; align-items: flex-start; gap: 0.5rem !important; }
+            .d-flex.gap-3 { gap: 0.5rem !important; }
+            .btn-group-mobile { display: flex; flex-direction: column; gap: 0.5rem; }
+            #demo-buy, #demo-sell { width: 100% !important; }
+        }
     </style>
 </head>
 <body>
@@ -372,12 +381,24 @@
             toClose.sort((a,b)=>b.i-a.i).forEach(c=>autoClosePosition(c.i));
             const s2 = getState(); tbody.innerHTML = '';
             s2.positions.forEach((p, idx) => { const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; const tr = document.createElement('tr'); const tdIdx=document.createElement('td'); tdIdx.textContent = (idx+1); const tdSide=document.createElement('td'); const badge=document.createElement('span'); badge.className = 'badge ' + (p.side==='BUY'?'bg-success':'bg-danger'); badge.textContent = p.side; tdSide.appendChild(badge); const tdSymbol=document.createElement('td'); tdSymbol.textContent = p.symbol.replace('USDT','/USDT'); const tdQty=document.createElement('td'); tdQty.textContent = p.qty.toFixed(6); const tdEntry=document.createElement('td'); tdEntry.textContent = fmt(p.entry); const tdSL=document.createElement('td'); tdSL.textContent = p.sl?fmt(p.sl):'-'; const tdTP=document.createElement('td'); tdTP.textContent = p.tp?fmt(p.tp):'-'; const tdPnl=document.createElement('td'); tdPnl.className = pnl>=0?'text-success':'text-danger'; tdPnl.textContent = fmt(pnl); const tdAct=document.createElement('td'); const btn=document.createElement('button'); btn.className = 'btn btn-outline-light btn-sm'; btn.textContent = 'Close'; btn.onclick = () => closePosition(idx); tdAct.appendChild(btn); tr.appendChild(tdIdx); tr.appendChild(tdSide); tr.appendChild(tdSymbol); tr.appendChild(tdQty); tr.appendChild(tdEntry); tr.appendChild(tdSL); tr.appendChild(tdTP); tr.appendChild(tdPnl); tr.appendChild(tdAct); tbody.appendChild(tr); }); }
-        async function applyTPPresetPrice(r){ const sym = document.getElementById('demo-symbol').value; const sl = parseFloat(document.getElementById('demo-sl').value||'0'); if(!sl || sl<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } let price = lastPrices[sym]; if(!price){ try { const rj = await fetch('/api/price?symbol=' + sym); const j = await rj.json(); price = j.price; } catch(e){} } if(!price || price<=0){ showAlert('Could not fetch price for preset calculation.'); return; } const sideSel = document.getElementById('preset-side').value; const diff = Math.abs(price - sl); let tp;
+        async function fetchPriceWithRetry(symbol){
+            for(let i=0; i<3; i++){
+                try {
+                    const r = await fetch('/api/price?symbol=' + symbol);
+                    if(!r.ok) throw new Error('Status ' + r.status);
+                    const j = await r.json();
+                    if(j && j.price && j.price > 0) return j.price;
+                } catch(e){}
+                await new Promise(r => setTimeout(r, 300));
+            }
+            return 0;
+        }
+        async function applyTPPresetPrice(r){ const sym = document.getElementById('demo-symbol').value; const sl = parseFloat(document.getElementById('demo-sl').value||'0'); if(!sl || sl<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } let price = lastPrices[sym]; if(!price){ price = await fetchPriceWithRetry(sym); } if(!price || price<=0){ showAlert('Could not fetch price for preset calculation.'); return; } const sideSel = document.getElementById('preset-side').value; const diff = Math.abs(price - sl); let tp;
             if(sideSel==='BUY'){ tp = price + (r * diff); } else { tp = price - (r * diff); }
             document.getElementById('demo-tp').value = tp.toFixed(2);
             document.getElementById('demo-mode').value = 'price'; updateModeVisibility(); }
-        async function applySLPreset(percent){ const mode = document.getElementById('demo-mode').value; const sym = document.getElementById('demo-symbol').value; if(mode==='percent'){ document.getElementById('demo-slp').value = percent; document.getElementById('demo-mode').value = 'percent'; updateModeVisibility(); return; } let price = lastPrices[sym]; if(!price){ try { const rj = await fetch('/api/price?symbol=' + sym); const j = await rj.json(); price = j.price; } catch(e){} } if(!price || price<=0){ showAlert('Could not fetch price for SL preset.'); return; } const sideSel = document.getElementById('preset-side').value; const sl = sideSel==='BUY' ? price * (1 - percent/100) : price * (1 + percent/100); document.getElementById('demo-sl').value = sl.toFixed(2); document.getElementById('demo-mode').value = 'price'; updateModeVisibility(); }
-        async function openPosition(side){ const amt = parseFloat(document.getElementById('demo-amount').value||'0'); if(!amt || amt<=0){ showAlert('Enter a valid amount.'); return; } const sym = document.getElementById('demo-symbol').value; let price = NaN; try { const r = await fetch('/api/price?symbol=' + sym); const j = await r.json(); price = j.price; } catch(e){} if(!price || price<=0){ showAlert('Price fetch failed. Try again.'); return; } const s = getState(); let qty = amt / price; if(side==='BUY'){ if(s.balance < amt){ showAlert('Insufficient balance.'); return; } s.balance -= amt; } else { clearAlert(); }
+        async function applySLPreset(percent){ const mode = document.getElementById('demo-mode').value; const sym = document.getElementById('demo-symbol').value; if(mode==='percent'){ document.getElementById('demo-slp').value = percent; document.getElementById('demo-mode').value = 'percent'; updateModeVisibility(); return; } let price = lastPrices[sym]; if(!price){ price = await fetchPriceWithRetry(sym); } if(!price || price<=0){ showAlert('Could not fetch price for SL preset.'); return; } const sideSel = document.getElementById('preset-side').value; const sl = sideSel==='BUY' ? price * (1 - percent/100) : price * (1 + percent/100); document.getElementById('demo-sl').value = sl.toFixed(2); document.getElementById('demo-mode').value = 'price'; updateModeVisibility(); }
+        async function openPosition(side){ const amt = parseFloat(document.getElementById('demo-amount').value||'0'); if(!amt || amt<=0){ showAlert('Enter a valid amount.'); return; } const sym = document.getElementById('demo-symbol').value; let price = await fetchPriceWithRetry(sym); if(!price || price<=0){ showAlert('Price fetch failed. Please check connection and try again.'); return; } const s = getState(); let qty = amt / price; if(side==='BUY'){ if(s.balance < amt){ showAlert('Insufficient balance.'); return; } s.balance -= amt; } else { clearAlert(); }
             const mode = document.getElementById('demo-mode').value;
             let sl, tp;
             if(mode==='price'){
