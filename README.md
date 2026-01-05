@@ -1,8 +1,8 @@
-# Capa-X Trading Bot 🤖📈
+# CapacityBay Trading Bot 🤖📈
 
 **Professional Grade Multi-Market Algorithmic Trading System**
 
-Capa-X is an advanced, AI-powered trading bot designed for institutional-grade performance across Crypto CEX (Centralized Exchanges) and DEX (Decentralized Exchanges). It features a unique 4-mode architecture allowing for safe simulation, secure proxy routing, direct high-frequency execution, and Web3 integration.
+CapacityBay is an advanced, AI-powered trading bot designed for institutional-grade performance across Crypto CEX (Centralized Exchanges) and DEX (Decentralized Exchanges). It features a unique 4-mode architecture allowing for safe simulation, secure proxy routing, direct high-frequency execution, and Web3 integration.
 
 ---
 
@@ -15,7 +15,7 @@ Capa-X is an advanced, AI-powered trading bot designed for institutional-grade p
 *   **🦄 DEX Mode (Web3)**: On-chain trading via smart contracts (Uniswap/PancakeSwap) with gas optimization and wallet integration.
 
 ### 2. AI & Machine Learning Core
-*   **🧠 CapaX Brain**: Ensemble model combining LSTM (Long Short-Term Memory), Transformers, and Reinforcement Learning (PPO).
+*   **🧠 CapacityBay Brain**: Ensemble model combining LSTM (Long Short-Term Memory), Transformers, and Reinforcement Learning (PPO).
 *   **📊 Sentiment Engine**: Real-time NLP analysis of news and social media to gauge market emotion.
 *   **🔮 Quantum Features**: Experimental probability distribution modeling for extreme market events.
 
@@ -40,8 +40,8 @@ Capa-X is an advanced, AI-powered trading bot designed for institutional-grade p
 
 1.  **Clone the Repository**
     ```bash
-    git clone https://github.com/howardi/Capa-X_TradingBot.git
-    cd Capa-X_TradingBot
+    git clone https://github.com/howardi/CapacityBay_TradingBot.git
+    cd CapacityBay_TradingBot
     ```
 
 2.  **Install Dependencies**
@@ -72,8 +72,8 @@ Running with Docker ensures the bot operates in an isolated, stable environment,
 ### 2. Setup
 1.  **Clone & Enter Directory:**
     ```bash
-    git clone https://github.com/howardi/Capa-X_TradingBot.git
-    cd Capa-X_TradingBot
+    git clone https://github.com/howardi/CapacityBay_TradingBot.git
+    cd CapacityBay_TradingBot
     ```
 
 2.  **Configure Environment:**

@@ -25,6 +25,6 @@ TRADING_CONFIG = {
     },
     "allocation": {
         "rebalance_frequency": "daily", # daily, hourly
-        "min_confidence_threshold": 0.65 # User Config
+        "min_confidence_threshold": 0.75 # User Config (stricter for elite execution)
     }
 }

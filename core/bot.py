@@ -28,6 +28,7 @@ from core.auto_trader import AutoTrader
 # It imports pandas and numpy. Not too heavy.
 from core.allocator import ProfitOptimizer 
 from config.settings import DEFAULT_SYMBOL, DEFAULT_TIMEFRAME
+from config.trading_config import TRADING_CONFIG
 
 import json
 import os
@@ -61,7 +62,7 @@ class TradingBot:
         self.symbol = DEFAULT_SYMBOL
         self.timeframe = DEFAULT_TIMEFRAME
         
-        # Auto-Trading Engine (CapaXBot Logic)
+        # Auto-Trading Engine (CapacityBay Logic)
         self.auto_trader = AutoTrader(self)
         self.trading_mode = 'Demo' # Default to Demo
         self.last_trade_time = None
@@ -94,8 +95,9 @@ class TradingBot:
             "Swing Range": SwingRangeStrategy(self),
             "Weighted Ensemble": WeightedSignalStrategy(self)
         }
-        self.active_strategy_name = "Smart Trend"
-        self.active_strategy = self.strategies[self.active_strategy_name]
+        # Default to Profit Optimizer mode: selects best strategy per regime
+        self.active_strategy_name = "Profit Optimization Layer"
+        self.active_strategy = self.strategies.get(self.active_strategy_name)
         
         # Initialize Profit Optimizer (Contextual Multi-Armed Bandit)
         self.profit_optimizer = ProfitOptimizer(list(self.strategies.keys()))
@@ -103,8 +105,25 @@ class TradingBot:
     @property
     def brain(self):
         if self._brain is None:
-            from core.brain import CapaXBrain
-            self._brain = CapaXBrain()
+            # Use safe import to avoid circular dependency issues
+            import core.brain
+            import importlib
+            
+            # Robust check for attribute existence to handle potential circular import artifacts
+            if not hasattr(core.brain, 'CapacityBayBrain'):
+                print("⚠️ core.brain.CapacityBayBrain missing! Attempting reload...")
+                try:
+                    importlib.reload(core.brain)
+                except Exception as e:
+                    print(f"❌ Failed to reload core.brain: {e}")
+            
+            # Double check
+            if hasattr(core.brain, 'CapacityBayBrain'):
+                self._brain = core.brain.CapacityBayBrain()
+            else:
+                # Fallback or fatal error
+                raise ImportError("Could not load CapacityBayBrain from core.brain after reload")
+                
         return self._brain
 
     @property
@@ -607,6 +626,7 @@ class TradingBot:
             "regime": clean_packet.get('market_regime', 'Unknown'),
             "execution_score": clean_packet.get('execution_score', 0),
             "components": clean_packet.get('components', {}),
+            "explanation": clean_packet.get('explanation', ""),
             "audit_status": "OPEN"
         }
         
@@ -705,9 +725,87 @@ class TradingBot:
                 # Sync Balance if in Live Mode to reflect realized PnL
                 if self.trading_mode in ['CEX_Proxy', 'CEX_Direct']:
                      self.sync_live_balance()
-                    
+                
                 # Log Close (Simplified)
                 # self.log_trade({...}) # Ideally log the close event too
+            else:
+                # Trailing Stop & Breakeven logic
+                try:
+                    df = self.data_manager.fetch_ohlcv(symbol, self.timeframe, limit=50)
+                    if df is not None and not df.empty:
+                        atr = (df['high'] - df['low']).rolling(14).mean().iloc[-1]
+                        if pd.isna(atr) or atr <= 0:
+                            atr = abs(current_price) * 0.01
+                        # 1R distance based on initial stop distance or ATR fallback
+                        r_dist = abs(entry - sl) if sl and sl > 0 else atr * 1.5
+
+                        if bias == 'BUY':
+                            # Move to breakeven after 1R
+                            if current_price >= entry + r_dist and (sl == 0 or sl < entry):
+                                position['stop_loss'] = entry
+                            # Trail by ~1.2 ATR behind price
+                            trail_sl = current_price - (atr * 1.2)
+                            if trail_sl > position.get('stop_loss', 0):
+                                position['stop_loss'] = trail_sl
+                            hh = df['high'].rolling(22).max().iloc[-1]
+                            chand = hh - (atr * 3.0)
+                            if chand > position.get('stop_loss', 0):
+                                position['stop_loss'] = chand
+                        elif bias == 'SELL':
+                            if current_price <= entry - r_dist and (sl == 0 or sl > entry):
+                                position['stop_loss'] = entry
+                            trail_sl = current_price + (atr * 1.2)
+                            # For short, a smaller stop_loss value is tighter
+                            if position.get('stop_loss', 0) == 0 or trail_sl < position['stop_loss']:
+                                position['stop_loss'] = trail_sl
+                            ll = df['low'].rolling(22).min().iloc[-1]
+                            chand_s = ll + (atr * 3.0)
+                            if position.get('stop_loss', 0) == 0 or chand_s < position['stop_loss']:
+                                position['stop_loss'] = chand_s
+
+                        # Partial take-profit at 1.5R, once per position
+                        try:
+                            took = position.get('partial_taken', False)
+                            if not took:
+                                target_move = 1.5 * r_dist
+                                moved = (current_price - entry) if bias == 'BUY' else (entry - current_price)
+                                if moved >= target_move:
+                                    half_size = position['position_size'] * 0.5
+                                    if half_size > 0:
+                                        # Realize half the position
+                                        realized_pnl = moved * half_size
+                                        capital_released = entry * half_size
+                                        trade_result = 'win' if realized_pnl > 0 else 'loss'
+                                        self.risk_manager.update_metrics(pnl_amount=realized_pnl, last_trade_result=trade_result, capital_released=capital_released)
+                                        # Reduce size and set flag
+                                        position['position_size'] = position['position_size'] - half_size
+                                        position['partial_taken'] = True
+                                        # Move stop to breakeven for remaining
+                                        position['stop_loss'] = entry
+                                        self.save_positions()
+                                        print(f"[TP1] Partial profit taken (50%). Remaining size: {position['position_size']:.6f}")
+                            took2 = position.get('partial2_taken', False)
+                            if position.get('partial_taken', False) and not took2:
+                                target_move2 = 2.5 * r_dist
+                                moved = (current_price - entry) if bias == 'BUY' else (entry - current_price)
+                                if moved >= target_move2:
+                                    half_rem = position['position_size'] * 0.5
+                                    if half_rem > 0:
+                                        realized_pnl2 = moved * half_rem
+                                        capital_released2 = entry * half_rem
+                                        trade_result2 = 'win' if realized_pnl2 > 0 else 'loss'
+                                        self.risk_manager.update_metrics(pnl_amount=realized_pnl2, last_trade_result=trade_result2, capital_released=capital_released2)
+                                        position['position_size'] = position['position_size'] - half_rem
+                                        position['partial2_taken'] = True
+                                        position['stop_loss'] = entry
+                                        self.save_positions()
+                                        print(f"[TP2] Second partial taken (50% of remaining). Remaining size: {position['position_size']:.6f}")
+                        except Exception as e:
+                            print(f"Partial TP failed: {e}")
+
+                        self.save_positions()
+                except Exception as e:
+                    print(f"Trailing stop update failed: {e}")
 
     def run_analysis(self, df=None):
         """
@@ -791,11 +889,11 @@ class TradingBot:
 
     def start(self):
         self.is_running = True
-        print("Capa-X System Activated...")
+        print("CapacityBay System Activated...")
 
     def stop(self):
         self.is_running = False
-        print("Capa-X System Deactivated...")
+        print("CapacityBay System Deactivated...")
 
     def run(self):
         """
@@ -816,7 +914,34 @@ class TradingBot:
                 # 3. Execute Signal
                 if signal and signal.type in ['buy', 'sell']:
                     print(f"[*] Signal Generated: {signal.type.upper()} {self.symbol} @ {signal.price}")
+
+                    # Cooldown: avoid overtrading unless very high confidence
+                    from datetime import datetime, timedelta
+                    # Regime-aware cooldown
+                    regime_for_cooldown = getattr(signal, 'regime', 'Unknown')
+                    min_cooldown = timedelta(minutes=20) if regime_for_cooldown in ['Volatile', 'Extreme Volatility'] else timedelta(minutes=15)
+                    if self.last_trade_time and (datetime.now() - self.last_trade_time) < min_cooldown:
+                        if signal.confidence < 0.85:
+                            print("[!] Cooldown active: skipping low-confidence signal to reduce overtrading.")
+                            time.sleep(60)
+                            continue
                     
+                    # Global kill-switch check
+                    if self.risk_manager.check_kill_switch():
+                        print("[!] Kill Switch Active: Trading paused due to drawdown protection.")
+                        time.sleep(60)
+                        continue
+
+                    # Minimum confidence gate (from config)
+                    base_conf = TRADING_CONFIG['allocation'].get('min_confidence_threshold', 0.75)
+                    dd_adj = self.risk_manager.max_drawdown * 0.5
+                    streak_adj = 0.05 if self.risk_manager.loss_streak > 2 else 0.0
+                    min_conf = min(0.9, max(base_conf, base_conf + dd_adj + streak_adj))
+                    if signal.confidence < min_conf:
+                        print(f"[!] Confidence {signal.confidence:.2f} < threshold {min_conf:.2f}: skipping.")
+                        time.sleep(10)
+                        continue
+
                     # Prepare Execution Packet
                     packet = {
                         "symbol": self.symbol,
@@ -826,16 +951,38 @@ class TradingBot:
                         "take_profit": signal.decision_details.get('take_profit', 0),
                         "position_size": signal.decision_details.get('position_size', 0),
                         "strategy": self.active_strategy_name,
-                        "confidence": signal.strength,
+                        "confidence": signal.confidence,
                         "decision": "EXECUTE",
                         "market_regime": signal.decision_details.get('regime', 'Unknown')
                     }
+
+                    # Portfolio exposure limits
+                    allowed, reason = self.risk_manager.check_portfolio_limits(self.symbol, packet['position_size'])
+                    if not allowed:
+                        print(f"[!] Portfolio Limit Blocked: {reason}")
+                        time.sleep(10)
+                        continue
+
+                    # Sanity: require non-zero size and valid SL/TP
+                    if packet['position_size'] <= 0 or packet['stop_loss'] == 0 or packet['take_profit'] == 0:
+                        print("[!] Invalid sizing or levels: skipping execution.")
+                        time.sleep(10)
+                        continue
+
+                    # Pre-trade explanation for auditability
+                    packet["explanation"] = (
+                        f"Strategy: {packet['strategy']} | Regime: {packet['market_regime']} | "
+                        f"Entry: {packet['entry']:.2f} | SL: {packet['stop_loss']:.2f} | TP: {packet['take_profit']:.2f} | "
+                        f"Size: {packet['position_size']:.6f} | Confidence: {packet['confidence']:.2f}"
+                    )
+                    print(packet["explanation"]) 
                     
                     # Execute Trade
                     result = self.execution.execute_order(packet)
                     
                     if result and result.get('status') == 'FILLED':
                         self.log_trade(packet)
+                        self.last_trade_time = datetime.now()
                         print(f"[+] Trade Executed: {packet['bias']} {packet['symbol']}")
                 
                 # 4. Sleep (Poll Interval)
@@ -849,4 +996,3 @@ class TradingBot:
                 import traceback
                 traceback.print_exc()
                 time.sleep(10)
-
