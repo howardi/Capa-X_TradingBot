@@ -124,6 +124,49 @@
             </div>
         </div>
 
+        <!-- Auto Trading Bot Section -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card border-info">
+                    <div class="card-header bg-transparent border-info d-flex justify-content-between align-items-center">
+                        <span class="text-info"><i class="fas fa-robot me-2"></i> Auto Trading Bot (Demo)</span>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="auto-trade-toggle">
+                            <label class="form-check-label" for="auto-trade-toggle">Enable</label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-3">
+                                <label class="form-label">Scan Interval</label>
+                                <select class="form-select form-select-sm" id="auto-interval">
+                                    <option value="5000">Fast (5s)</option>
+                                    <option value="10000" selected>Normal (10s)</option>
+                                    <option value="30000">Slow (30s)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Trade Amount (USDT)</label>
+                                <input type="number" class="form-control form-control-sm" id="auto-amount" value="1000">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Bot Status</label>
+                                <div class="d-flex align-items-center gap-2">
+                                    <div id="bot-status-indicator" class="spinner-grow spinner-grow-sm text-secondary" role="status"></div>
+                                    <span id="bot-status-text" class="text-muted">Bot is idle.</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <div class="progress" style="height: 2px;">
+                                <div id="bot-progress" class="progress-bar bg-info" role="progressbar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Features Summary -->
         <div class="row mt-4">
             <div class="col-12">
@@ -548,6 +591,101 @@
             setState(s);
             updateHistoryUI();
         }
+
+        let autoTradeTimer = null;
+        let autoTradeRunning = false;
+
+        async function openAutoPosition(side, amt, sym){
+            let price = await fetchPriceWithRetry(sym);
+            if(!price || price<=0) return;
+            const s = getState();
+            
+            // Check max positions (limit to 5 for demo safety)
+            if(s.positions.length >= 5) return;
+
+            // Check if we already have an open position for this symbol (any side) to avoid stacking
+            const existing = s.positions.find(p => p.symbol === sym);
+            if(existing) return; 
+            
+            if(s.balance < amt) return;
+            s.balance -= amt;
+            const qty = amt / price;
+            // Default 1% SL, 2% TP for auto
+            const sl = side==='BUY' ? price * 0.99 : price * 1.01;
+            const tp = side==='BUY' ? price * 1.02 : price * 0.98;
+            
+            const pos = { side, qty, entry: price, symbol: sym, sl, tp, reason: 'Auto Bot' };
+            s.positions.push(pos);
+            setState(s);
+            updateBalanceUI();
+            updatePositionsPnL();
+        }
+
+        async function runAutoScan(){
+            if(!autoTradeRunning) return;
+            const indicator = document.getElementById('bot-status-indicator');
+            const text = document.getElementById('bot-status-text');
+            const progress = document.getElementById('bot-progress');
+            const amt = parseFloat(document.getElementById('auto-amount').value || '1000');
+            const sym = document.getElementById('demo-symbol').value;
+            const tf = document.getElementById('analysis-timeframe').value;
+            
+            indicator.className = 'spinner-grow spinner-grow-sm text-info';
+            text.textContent = `Scanning ${sym} (${tf})...`;
+            progress.style.width = '50%';
+            
+            try {
+                // Add a random param to ensure fresh fetch if needed, though timeframe usually enough
+                const r = await fetch(`/api/analyze?timeframe=${tf}&_t=${Date.now()}`);
+                const data = await r.json();
+                
+                progress.style.width = '100%';
+                if(data.signal === 'BUY' || data.signal === 'SELL'){
+                    text.textContent = `Signal: ${data.signal}. Executing...`;
+                    await openAutoPosition(data.signal, amt, sym);
+                    setTimeout(() => { 
+                         if(autoTradeRunning) {
+                             text.textContent = 'Trade Executed. Waiting...';
+                             indicator.className = 'spinner-grow spinner-grow-sm text-success';
+                             progress.style.width = '0%';
+                         }
+                    }, 2000);
+                } else {
+                    text.textContent = 'No signal found. Waiting...';
+                    indicator.className = 'spinner-grow spinner-grow-sm text-warning';
+                    setTimeout(() => { if(autoTradeRunning) progress.style.width = '0%'; }, 1000);
+                }
+            } catch(e) {
+                text.textContent = 'Scan error. Retrying...';
+                indicator.className = 'spinner-grow spinner-grow-sm text-danger';
+            }
+        }
+
+        function toggleAutoTrade(){
+            const toggle = document.getElementById('auto-trade-toggle');
+            const intervalSel = document.getElementById('auto-interval');
+            const indicator = document.getElementById('bot-status-indicator');
+            const text = document.getElementById('bot-status-text');
+            
+            autoTradeRunning = toggle.checked;
+            
+            if(autoTradeRunning){
+                const ms = parseInt(intervalSel.value);
+                text.textContent = 'Bot started. Scanning...';
+                indicator.className = 'spinner-grow spinner-grow-sm text-success';
+                runAutoScan(); // Run immediately
+                autoTradeTimer = setInterval(runAutoScan, ms);
+                intervalSel.disabled = true;
+            } else {
+                if(autoTradeTimer) clearInterval(autoTradeTimer);
+                autoTradeTimer = null;
+                text.textContent = 'Bot is idle.';
+                indicator.className = 'spinner-grow spinner-grow-sm text-secondary';
+                document.getElementById('bot-progress').style.width = '0%';
+                intervalSel.disabled = false;
+            }
+        }
+
         function initDemo(){ const ui=getUI(); document.getElementById('preset-side').value = ui.presetSide; document.getElementById('demo-mode').value = ui.mode; document.getElementById('demo-symbol').value = ui.symbol; document.getElementById('demo-trailing-enabled').checked = !!ui.trailingEnabled; document.getElementById('demo-breakeven-enabled').checked = !!ui.breakevenEnabled; if(ui.trailing!==''){ document.getElementById('demo-trailing').value = ui.trailing; }
             updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); updateHistoryUI(); setInterval(refreshAllPrices, 10000);
             document.getElementById('demo-buy').onclick = () => { document.getElementById('preset-side').value = 'BUY'; setUI({ presetSide:'BUY' }); clearAlert(); openPosition('BUY'); };
@@ -568,6 +706,7 @@
             document.getElementById('sl-1_5p').onclick = () => { clearAlert(); applySLPreset(1.5); };
             document.getElementById('sl-2p').onclick = () => { clearAlert(); applySLPreset(2); };
             document.getElementById('demo-flatten').onclick = closeAllPositions;
+            document.getElementById('auto-trade-toggle').onchange = toggleAutoTrade;
             updatePresetStates(); }
         document.addEventListener('DOMContentLoaded', initDemo);
     </script>
