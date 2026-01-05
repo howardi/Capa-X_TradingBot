@@ -4,6 +4,7 @@ import os
 import requests
 import traceback
 import time
+import random
 from datetime import datetime
 
 # Robust template folder resolution for Vercel

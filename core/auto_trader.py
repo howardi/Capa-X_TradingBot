@@ -48,6 +48,8 @@ class AutoTrader:
         self.bot = bot
         self.is_running = False
         self.thread = None
+        self.consecutive_losses = 0
+        self.cooldown_until = 0
         
         # Load Config
         self.cfg = Config("config.yaml")
@@ -246,7 +248,35 @@ class AutoTrader:
                         close_reason = "Take Profit"
                     elif side == 'sell' and current_price <= tp:
                         close_reason = "Take Profit"
+                
+                # Dynamic Trailing Stop (New Better Logic)
+                # Move SL to Breakeven if > 1% profit, then trail by 1.5%
+                entry_price = float(entry)
+                if entry_price > 0:
+                    if side == 'buy':
+                        # Update Max Price
+                        pos['max_price'] = max(pos.get('max_price', entry_price), current_price)
+                        max_p = pos['max_price']
                         
+                        # 1. Breakeven Trigger (e.g. 1% gain)
+                        if current_price >= entry_price * 1.01:
+                            new_sl = max(sl, entry_price * 1.001) # Move to slightly above entry
+                            # 2. Trailing Trigger (Trail by 1.5% from max)
+                            trail_sl = max_p * 0.985 
+                            pos['sl'] = max(new_sl, trail_sl)
+                            
+                    elif side == 'sell':
+                        # Update Min Price
+                        pos['min_price'] = min(pos.get('min_price', entry_price), current_price)
+                        min_p = pos['min_price']
+                        
+                        # 1. Breakeven Trigger
+                        if current_price <= entry_price * 0.99:
+                            new_sl = min(sl, entry_price * 0.999) # Move to slightly below entry
+                            # 2. Trailing Trigger
+                            trail_sl = min_p * 1.015
+                            pos['sl'] = min(new_sl, trail_sl)
+                
                 if close_reason:
                     logging.info(f"{symbol} hit {close_reason} at {current_price} (Entry: {entry}). Closing...")
                     
@@ -254,13 +284,24 @@ class AutoTrader:
                     close_side = 'sell' if side == 'buy' else 'buy'
                     self.exec.execute_robust(symbol, close_side, pos['qty'], strategy="market")
                     
+                    # Logic for Cool-down
+                    pnl = (current_price - entry) * pos['qty'] if side == 'buy' else (entry - current_price) * pos['qty']
+                    if pnl < 0:
+                        self.consecutive_losses += 1
+                        if self.consecutive_losses >= 3:
+                            self.cooldown_until = time.time() + 3600 # 1 hour cool-down
+                            logging.warning(f"3 Consecutive Losses. Cooling down until {time.ctime(self.cooldown_until)}")
+                            self.consecutive_losses = 0
+                    else:
+                        self.consecutive_losses = 0 # Reset on win
+
                     # Log
                     packet = {
                         "symbol": symbol,
                         "bias": close_side.upper(),
                         "entry": entry,
                         "exit": current_price,
-                        "pnl": (current_price - entry) * pos['qty'] if side == 'buy' else (entry - current_price) * pos['qty'],
+                        "pnl": pnl,
                         "reason": close_reason,
                         "strategy": "AutoMonitor"
                     }
