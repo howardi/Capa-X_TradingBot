@@ -247,9 +247,9 @@ def api_analyze():
         # In Docker mode, this would call the actual ML model
         signal = "NEUTRAL"
         if price > 0:
-            # Create a pseudo-random determination based on price + timeframe len
+            # Create a pseudo-random determination based on price + timeframe string hash
             # This ensures consistent results for same price/timeframe but variety across them
-            seed = int(price) + len(timeframe)
+            seed = int(price) + sum(ord(c) for c in timeframe)
             if seed % 3 == 0:
                 signal = "BUY"
             elif seed % 3 == 1:

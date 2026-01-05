@@ -141,7 +141,7 @@ class AdaptiveRiskManager:
     def check_circuit_breakers(self, equity_start, equity_now):
         """
         Check if circuit breaker should trigger based on drawdown.
-        Matches CapaXBot requirements.
+        Matches CapacityBay requirements.
         """
         if equity_start == 0: return True
         dd = 1 - (equity_now / equity_start)
@@ -158,7 +158,7 @@ class AdaptiveRiskManager:
     def position_size(self, price, atr):
         """
         Calculate position size and stop distance.
-        Matches CapaXBot requirements.
+        Matches CapacityBay requirements.
         """
         # Reuse existing logic but return tuple (qty, stop_distance)
         sl_data = self.calculate_dynamic_stops(price, atr, 'buy') # Side doesn't matter for distance
@@ -176,7 +176,7 @@ class AdaptiveRiskManager:
     def stop_take_levels(self, side, price, atr):
         """
         Get SL/TP levels.
-        Matches CapaXBot requirements.
+        Matches CapacityBay requirements.
         """
         levels = self.calculate_dynamic_stops(price, atr, side)
         return levels['stop_loss'], levels['take_profit']

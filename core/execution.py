@@ -47,7 +47,7 @@ class ExecutionEngine:
     def place(self, symbol, side, qty, price, atr, risk_manager):
         """
         Place order with attached SL/TP.
-        Matches CapaXBot requirements.
+        Matches CapacityBay requirements.
         """
         # Calculate SL/TP using the passed risk manager
         sl, tp = risk_manager.stop_take_levels(side, price, atr)
@@ -56,7 +56,7 @@ class ExecutionEngine:
         print(f"Placing {side} {qty} {symbol} at {price:.2f} | SL {sl:.2f} TP {tp:.2f}")
         
         # Execute via Robust Engine
-        # CapaXBot uses limit orders by default logic
+        # CapacityBay uses limit orders by default logic
         order = self.execute_robust(symbol, side, qty, price, strategy="limit")
         
         return {"order": order, "sl": sl, "tp": tp}

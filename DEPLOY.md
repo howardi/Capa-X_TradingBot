@@ -2,7 +2,7 @@
 
 ## 🚀 Recommended Deployment (Docker)
 
-For the full functionality of **Capa-X Trading Bot**, including the AI engine, continuous trading loop, and real-time dashboard, you **must** use a platform that supports persistent Docker containers.
+For the full functionality of **CapacityBay Trading Bot**, including the AI engine, continuous trading loop, and real-time dashboard, you **must** use a platform that supports persistent Docker containers.
 
 ### Option 1: Railway / Render (Easiest)
 1. Fork this repository.
@@ -15,8 +15,8 @@ For the full functionality of **Capa-X Trading Bot**, including the AI engine, c
 1. SSH into your server.
 2. Clone the repo:
    ```bash
-   git clone https://github.com/howardi/Capa-X_TradingBot.git
-   cd Capa-X_TradingBot
+   git clone https://github.com/howardi/CapacityBay_TradingBot.git
+    cd CapacityBay_TradingBot
    ```
 3. Run with Docker Compose:
    ```bash

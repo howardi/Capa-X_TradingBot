@@ -27,7 +27,7 @@ class Settings:
     TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "15"))
     RETRIES = int(os.getenv("HTTP_RETRIES", "3"))
     BACKOFF = float(os.getenv("HTTP_BACKOFF", "0.5"))
-    USER_AGENT = os.getenv("HTTP_USER_AGENT", "CapaXBot/1.0 (+https://capax.local)")
+    USER_AGENT = os.getenv("HTTP_USER_AGENT", "CapacityBay/1.0 (+https://capacitybay.local)")
     
     # Binance
     BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://api.binance.com")
@@ -429,7 +429,7 @@ class BybitV5(ExchangeBase):
 # ==============================
 # Unified Interface
 # ==============================
-class CapaXBot:
+class CapacityBayBot:
     def __init__(self, binance_keys: Dict[str, str] = None, bybit_keys: Dict[str, str] = None):
         # Allow passing keys, or fall back to Settings
         b_key = binance_keys.get("api_key") if binance_keys else Settings.BINANCE_API_KEY
@@ -585,7 +585,7 @@ class CapaXBot:
 # Main Execution (Test)
 # ==============================
 if __name__ == "__main__":
-    bot = CapaXBot()
+    bot = CapacityBayBot()
     print("Checking System Status...")
     status = bot.system_status()
     print(json.dumps(status, indent=2))

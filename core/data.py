@@ -565,7 +565,15 @@ class DataManager:
             # Pass params if needed, but standard fetch_balance usually suffices
             return self.exchange.fetch_balance()
         except Exception as e:
-            # Re-raise exception so the Bot can handle it (e.g. -2008 check)
+            error_str = str(e)
+            # Handle Invalid API Key (-2008) gracefully
+            if "-2008" in error_str or "Invalid Api-Key ID" in error_str:
+                print(f"[CRITICAL] Invalid API Key detected during fetch_balance. Clearing keys to prevent further errors.")
+                self.exchange.apiKey = None
+                self.exchange.secret = None
+                raise Exception("Invalid API Key. Please update your credentials.")
+            
+            # Re-raise exception so the Bot can handle it
             print(f"[ERROR] Error fetching balance: {e}")
             raise e
 

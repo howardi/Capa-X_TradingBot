@@ -197,6 +197,48 @@ def apply_custom_styles():
             width: 8px;
             height: 8px;
         }
+
+        /* --- MOBILE RESPONSIVENESS --- */
+        @media (max-width: 768px) {
+            .stApp {
+                padding: 0.5rem;
+            }
+            
+            h1 {
+                font-size: 1.8rem !important;
+                padding-bottom: 0.5rem;
+            }
+            
+            [data-testid="stMetric"] {
+                padding: 10px;
+                margin-bottom: 10px;
+            }
+            
+            .stButton > button {
+                width: 100%;
+                padding: 0.6rem 1rem;
+                margin-bottom: 5px;
+            }
+            
+            /* Improve touch targets */
+            .stSelectbox > div > div > div, 
+            .stTextInput > div > div > input,
+            .stNumberInput > div > div > input {
+                min-height: 45px;
+            }
+
+            /* Adjust tabs for mobile */
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 5px;
+                overflow-x: auto;
+                padding-bottom: 5px;
+            }
+            
+            .stTabs [data-baseweb="tab"] {
+                padding: 8px 12px;
+                font-size: 0.9rem;
+            }
+        }
         
         ::-webkit-scrollbar-track {
             background: var(--bg-color); 
@@ -259,6 +301,77 @@ def apply_custom_styles():
             box-shadow: 0 0 15px rgba(0, 242, 255, 0.2);
         }
 
+        /* --- FORMS --- */
+        [data-testid="stForm"] {
+            background: rgba(20, 25, 35, 0.7);
+            border: 1px solid rgba(0, 242, 255, 0.2);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        /* --- RESPONSIVENESS --- */
+        @media (max-width: 768px) {
+            .stApp {
+                font-size: 14px;
+            }
+            h1 {
+                font-size: 1.8rem !important;
+            }
+            h2 {
+                font-size: 1.5rem !important;
+            }
+            h3 {
+                font-size: 1.2rem !important;
+            }
+            .cyber-card {
+                padding: 12px;
+                margin-bottom: 15px;
+            }
+            /* Stack columns on mobile */
+            [data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 auto !important;
+                min-width: 100% !important;
+            }
+            
+            /* Touch-friendly buttons */
+            .stButton > button {
+                width: 100%;
+                min-height: 48px; /* Touch target size */
+                font-size: 1rem;
+                margin-top: 5px;
+                margin-bottom: 5px;
+            }
+            
+            /* Input fields bigger for touch */
+            .stTextInput > div > div > input, 
+            .stNumberInput > div > div > input, 
+            .stSelectbox > div > div > div {
+                min-height: 45px;
+                font-size: 16px; /* Prevent zoom on iOS */
+            }
+            
+            /* Tabs stacking or scrollable */
+            .stTabs [data-baseweb="tab-list"] {
+                flex-wrap: wrap;
+                gap: 5px;
+            }
+            .stTabs [data-baseweb="tab"] {
+                flex-grow: 1;
+                text-align: center;
+                padding: 10px 5px;
+            }
+            
+            /* Adjust padding for main container */
+            .block-container {
+                padding-top: 3rem !important;
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }
+        }
+
         </style>
     """, unsafe_allow_html=True)
 
@@ -318,65 +431,58 @@ def neon_header(text, level=1):
     </h{level}>
     """, unsafe_allow_html=True)
 
-def cyberpunk_logo(logo_path=os.path.join("assets", "logo.png")):
-    if os.path.exists(logo_path):
-        with open(logo_path, "rb") as f:
-            data = f.read()
-            encoded = base64.b64encode(data).decode()
-        # Responsive Logo Image with Glow
-        logo_html = f'''
-            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
-                <img src="data:image/png;base64,{encoded}" 
-                     style="
-                        width: 150px; 
-                        height: 150px; 
-                        object-fit: contain; 
-                        border-radius: 50%; 
-                        box-shadow: 0 0 30px rgba(0, 242, 255, 0.3);
-                        transition: transform 0.3s ease;
-                     "
-                     onmouseover="this.style.transform='scale(1.05)'"
-                     onmouseout="this.style.transform='scale(1)'"
-                >
-            </div>
-        '''
-        # Hide Text if Logo is present (Cleaner look for CapacityBay)
-        text_html = "" 
-    else:
-        logo_html = """
+def cyberpunk_logo(logo_path=None, size="180px", font_size="24px"):
+    # Always render the code-based logo for consistent CapacityBay branding
+    # Recreating the circular logo with Green Text on White Background
+    logo_html = f"""
+    <div style="
+        display: inline-block;
+        width: {size};
+        height: {size};
+        background: white;
+        border: 5px solid #00994d;
+        border-radius: 50%;
+        margin-bottom: 20px;
+        box-shadow: 0 0 30px rgba(0, 242, 255, 0.2);
+        display: flex; 
+        flex-direction: column;
+        align-items: center; 
+        justify-content: center; 
+        font-family: 'Inter', sans-serif;
+        overflow: hidden;
+    ">
         <div style="
-            display: inline-block;
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, #00f2ff, #bd00ff);
-            border-radius: 50%;
-            margin-bottom: 20px;
-            box-shadow: 0 0 30px rgba(0, 242, 255, 0.5);
-            display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: bold; color: white; font-family: 'Inter', sans-serif;
-        ">CB</div>
-        """
-        text_html = """
-        <h1 style="
-            color: #fff; 
-            font-size: 3rem; 
+            color: #00994d;
+            font-size: {font_size};
             font-weight: 800;
-            letter-spacing: -2px;
-            margin: 0;
-            text-shadow: 0 0 20px rgba(0, 242, 255, 0.5);
-        ">CapacityBay</h1>
-        """
-
+            letter-spacing: -1px;
+            margin-bottom: 5px;
+        ">Capa-X</div>
+        <div style="
+            color: #333;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: capitalize;
+            text-align: center;
+            width: 90%;
+        ">Communicate | Collaborate | Create</div>
+    </div>
+    """
+    
+    # We no longer need the external text since it is inside the logo now
+    # But for the dashboard title, we might want to keep the main text or just use the logo.
+    # The user said "i want this logo there", implying the visual representation.
+    # I will hide the separate text headers to avoid duplication if the logo contains the text.
+    
     st.markdown(f"""
-    <div style="text-align: center; margin-bottom: 30px; animation: fadeIn 1s ease-in;">
+    <div style="
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        margin-bottom: 30px;
+        position: relative;
+        z-index: 10;
+    ">
         {logo_html}
-        {text_html}
-        <p style="
-            color: #00f2ff; 
-            font-family: 'JetBrains Mono', monospace; 
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            opacity: 0.8;
-        ">Communicate | Collaborate | Create</p>
     </div>
     """, unsafe_allow_html=True)

@@ -10,8 +10,9 @@ except Exception as e:
 import time
 import sys
 import os
-
+import importlib
 import core.styles as styles
+importlib.reload(styles)
 
 # Defensive Import Wrapper
 def get_style_func(name, fallback_func=None):
@@ -47,6 +48,7 @@ card_container = get_style_func('card_container', fallback_container)
 cyberpunk_logo = get_style_func('cyberpunk_logo')
 import core.auth
 from core.auth import AuthManager, UserManager, TOTP, SessionManager
+from core.ton_wallet import TonConnectManager
 from core.web3_wallet import Web3Wallet
 from config.settings import APP_NAME, VERSION, DEFAULT_SYMBOL
 
@@ -102,7 +104,7 @@ if st.session_state.get('logged_in'):
             del st.query_params["session_id"]
             
         # Clear local storage via JS injection
-        st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
+        st.markdown("<script>localStorage.removeItem('capacitybay_session');</script>", unsafe_allow_html=True)
         st.rerun()
     # Warning 5 minutes before (6900 seconds)
     elif idle_duration > 6900:
@@ -123,7 +125,7 @@ if logout_reason == "timeout":
         st.session_state.logged_in = False
         st.session_state.username = None
     # Clear token from local storage if it persists
-    st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
+    st.markdown("<script>localStorage.removeItem('capacitybay_session');</script>", unsafe_allow_html=True)
 
 if not st.session_state.logged_in and session_id:
     # Validate Session
@@ -145,13 +147,13 @@ if not st.session_state.logged_in and session_id:
         if "session_id" in st.query_params:
             del st.query_params["session_id"]
         # Clear invalid token from storage to prevent reload loops
-        st.markdown("<script>localStorage.removeItem('caparox_session');</script>", unsafe_allow_html=True)
+        st.markdown("<script>localStorage.removeItem('capacitybay_session');</script>", unsafe_allow_html=True)
 
 # Inject Persistence Script (Only if NOT logged in and NO session_id in URL)
 if not st.session_state.logged_in and not session_id and not logout_reason:
     st.markdown("""
         <script>
-            const token = localStorage.getItem('caparox_session');
+            const token = localStorage.getItem('capacitybay_session');
             if (token) {
                 window.location.search = '?session_id=' + token;
             }
@@ -231,6 +233,10 @@ def get_cached_ohlcv(_bot, symbol, timeframe):
 @st.cache_data(ttl=60)
 def get_cached_analysis(_bot, df):
     """Cache the heavy analysis to improve dashboard speed"""
+    # Simple validation: Ensure df is not too old (though cache ttl handles this mostly, 
+    # we want to ensure we don't cache empty or stale data if passed explicitly)
+    if df.empty:
+        return None
     return _bot.run_analysis(df)
 
 @st.cache_data(ttl=60)
@@ -287,20 +293,101 @@ def check_alerts(bot_instance):
 
 # --- Authentication Logic ---
 if not st.session_state.logged_in:
-    # Spacer
-    st.markdown("<br><br>", unsafe_allow_html=True)
+    # Remove default top padding and spacer for immediate visibility
     
+    # Responsive Columns: Center on desktop, Full width on mobile
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
         # Cyberpunk Header
-        cyberpunk_logo()
+        st.markdown("""
+        <div class="login-header" style='text-align: center; margin-bottom: 30px;'>
+            <h1 style='color: #00f2ff; margin-bottom: 10px; text-shadow: 0 0 10px rgba(0, 242, 255, 0.5); font-family: "JetBrains Mono", monospace;'>Capa-X</h1>
+            <h3 style='color: #e0e6ed; font-size: 1.1rem; margin-bottom: 5px; font-weight: 400;'>The Intelligent Trading Engine</h3>
+            <p style='color: #94a3b8; font-size: 0.9rem; margin-bottom: 15px; font-style: italic;'>The Future of Trading, Today</p>
+            <p style='color: #64748b; font-size: 0.8rem; margin-top: 5px;'>powered by <span style='color: #00994d; font-weight: 700;'>CapacityBay</span></p>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Container with explicit border styling via CSS target
         with st.container():
             st.markdown("""
             <style>
-            /* Specific styling for the login container context if possible, 
-               but here we rely on the global card styling we applied earlier */
+            /* Reduce top padding for main container so login is at the top */
+            .block-container {
+                padding-top: 0rem !important;
+                padding-bottom: 0rem !important;
+            }
+            
+            /* Login Form Container Styling */
+            [data-testid="stForm"] {
+                background-color: rgba(20, 25, 35, 0.8);
+                border: 1px solid rgba(0, 242, 255, 0.2);
+                border-radius: 15px;
+                padding: 1.5rem;
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+                margin-top: 0px;
+            }
+            
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                /* Make the center column wider on mobile */
+                div[data-testid="column"] {
+                    width: 100% !important;
+                    flex: 1 1 auto !important;
+                    min-width: 100% !important;
+                }
+                
+                /* Further reduce padding on mobile */
+                .block-container {
+                    padding-top: 0rem !important;
+                }
+                
+                /* Reduce padding on mobile */
+                [data-testid="stForm"] {
+                    padding: 1.5rem;
+                    margin-top: 0rem;
+                }
+                
+                .login-header h1 {
+                    font-size: 2rem !important;
+                }
+                
+                .login-header {
+                    margin-bottom: 15px !important;
+                }
+            }
+            
+            /* Input fields enhancement */
+            .stTextInput input {
+                background-color: rgba(10, 14, 23, 0.9) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                color: white !important;
+            }
+            
+            .stTextInput input:focus {
+                border-color: #00f2ff !important;
+                box-shadow: 0 0 10px rgba(0, 242, 255, 0.2) !important;
+            }
+            
+            /* Tab Styling */
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 10px;
+                background-color: transparent;
+            }
+            
+            .stTabs [data-baseweb="tab"] {
+                background-color: rgba(255, 255, 255, 0.05);
+                border-radius: 5px;
+                color: #94a3b8;
+                padding: 8px 16px;
+                border: none;
+            }
+            
+            .stTabs [aria-selected="true"] {
+                background-color: rgba(0, 242, 255, 0.1) !important;
+                color: #00f2ff !important;
+                border: 1px solid rgba(0, 242, 255, 0.3) !important;
+            }
             </style>
             """, unsafe_allow_html=True)
             
@@ -345,7 +432,7 @@ if not st.session_state.logged_in:
                                         # Inject JS to save token
                                         st.markdown(f"""
                                             <script>
-                                                localStorage.setItem('caparox_session', '{token}');
+                                                localStorage.setItem('capacitybay_session', '{token}');
                                             </script>
                                         """, unsafe_allow_html=True)
                                         
@@ -405,7 +492,7 @@ if not st.session_state.logged_in:
                             
                             st.markdown(f"""
                                 <script>
-                                    localStorage.setItem('caparox_session', '{token}');
+                                    localStorage.setItem('capacitybay_session', '{token}');
                                 </script>
                             """, unsafe_allow_html=True)
                             
@@ -455,6 +542,7 @@ if 'loaded_core_version' not in st.session_state or st.session_state.loaded_core
         importlib.reload(core.data)
         # core.auth is reloaded if needed but safe to skip for speed if stable
         importlib.reload(core.risk)
+        importlib.reload(core.brain) # Ensure brain is reloaded
         importlib.reload(core.strategies) # Ensure strategies are updated
         importlib.reload(core.bot)
         st.session_state.loaded_core_version = SESSION_VERSION_KEY
@@ -485,11 +573,15 @@ if 'trade_replay' not in st.session_state:
 
 # Sidebar Configuration
 with st.sidebar:
+    # --- BRANDING ---
+    st.markdown("<h1 style='text-align: center; color: #00f2ff; margin-bottom: 20px;'>Capa-X</h1>", unsafe_allow_html=True)
+    # cyberpunk_logo(size="120px", font_size="16px")
+
     # --- CYBERPUNK STATUS WIDGET ---
     st.markdown("""
     <div style="background: linear-gradient(135deg, rgba(0, 242, 255, 0.05) 0%, rgba(0, 0, 0, 0) 100%); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 242, 255, 0.2); margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-            <span style="color: #00f2ff; font-weight: 800; letter-spacing: 1px; font-size: 0.9rem;">CAPA-X CORE</span>
+            <span style="color: #00f2ff; font-weight: 800; letter-spacing: 1px; font-size: 0.9rem;">SYSTEM STATUS</span>
             <span style="height: 8px; width: 8px; background-color: #00f2ff; border-radius: 50%; box-shadow: 0 0 8px #00f2ff; animation: pulse 2s infinite;"></span>
         </div>
         <div style="height: 1px; background: linear-gradient(90deg, rgba(0,242,255,0.5), transparent); margin-bottom: 8px;"></div>
@@ -543,6 +635,13 @@ with st.sidebar:
     st.divider()
     st.markdown("### 🔐 Web3 Wallet")
     
+    # Check for JS actions (e.g., TON Connect fallback)
+    if "action" in st.query_params:
+        if st.query_params["action"] == "connect_ton":
+            st.session_state.show_ton_modal = True
+            st.toast("Opening Telegram Wallet...", icon="💎")
+            # We don't clear query params here to avoid loop, user will just see the modal open
+
     # Check for wallet in URL (Callback from JS)
     if "wallet_address" in st.query_params:
         addr = st.query_params["wallet_address"]
@@ -563,8 +662,70 @@ with st.sidebar:
                 st.toast(f"Connected to {provider_name}!", icon="🔗")
                 
     if not st.session_state.web3_wallet.is_connected():
+        # --- TELEGRAM WALLET (Simulated) ---
+        if 'ton_manager' not in st.session_state:
+            st.session_state.ton_manager = TonConnectManager()
+            
+        st.markdown("#### 💎 Telegram Ecosystem")
+        col_tg, col_other = st.columns([1, 1])
+        with col_tg:
+            st.info("🚀 **Recommended for TON Users**")
+            if st.button("Connect Telegram Wallet", use_container_width=True, type="primary"):
+                st.session_state.show_ton_modal = True
+        
+        if st.session_state.get('show_ton_modal', False):
+            with st.expander("📱 Telegram Wallet Connection", expanded=True):
+                req = st.session_state.ton_manager.generate_connect_request()
+                st.markdown("### 💎 Connect via Telegram")
+                st.warning("⚠️ **NOTE:** Browser blocking may prevent automatic app opening. Please use the options below.")
+                
+                # 1. Direct Links
+                col_link1, col_link2 = st.columns(2)
+                with col_link1:
+                     st.link_button("🚀 Open Tonkeeper", req['connect_url'], type="primary", help="Best for Tonkeeper App")
+                with col_link2:
+                     tg_url = req.get('tg_link', "https://t.me/wallet")
+                     # Try to force a new window which sometimes helps with protocol handlers
+                     st.markdown(f'<a href="{tg_url}" target="_blank" style="display: inline-block; padding: 0.5rem 1rem; background-color: #24A1DE; color: white; text-decoration: none; border-radius: 4px; text-align: center; width: 100%;">✈️ Open Telegram Desktop</a>', unsafe_allow_html=True)
+                
+                # 2. Manual Copy
+                st.markdown("---")
+                st.markdown("**Option 2: Copy & Paste**")
+                st.caption("Copy this link and paste it into your browser address bar or a Telegram message to yourself:")
+                st.code(req['connect_url'], language="text")
+                
+                # 3. Simulation / Skip
+                st.markdown("---")
+                st.markdown("### 🛑 Still not working?")
+                st.info("If the wallet app doesn't open or connect, use **Simulation Mode** to instantly load a demo wallet and start trading.")
+                
+                # Optional: Use real address for simulation
+                custom_sim_addr = st.text_input("Enter your TON Address (Optional)", placeholder="Paste address to fetch REAL balance for simulation")
+                
+                if st.button("✅ CLICK HERE TO CONNECT (Demo Mode)", type="primary", use_container_width=True):
+                    if custom_sim_addr and len(custom_sim_addr) > 10:
+                        # Use User's Address
+                        target_addr = custom_sim_addr
+                    else:
+                        # Generate Random Address
+                        mock_data = st.session_state.ton_manager.mock_approve_connection()
+                        target_addr = mock_data['address']
+                        
+                    # Connect via Web3Wallet interface for consistency
+                    # We set provider to 'Telegram Wallet' to enable "Trading" (Simulation)
+                    st.session_state.web3_wallet.connect(target_addr, 'ton', 'Telegram Wallet')
+                    st.session_state.is_telegram_wallet = True
+                    st.session_state.show_ton_modal = False
+                    st.toast("Telegram Wallet Connected Successfully!", icon="🎉")
+                    st.rerun()
+
         # EXPANDED WALLET SELECTOR WITH DISCOVERY
         
+        # Fallback manual trigger
+        if st.button("🔌 Trouble Connecting? Click for Manual TON Setup", type="secondary", use_container_width=True):
+             st.session_state.show_ton_modal = True
+             st.rerun()
+
         # Get Project ID from session if available
         wc_project_id = st.session_state.get('wc_project_id', '')
         
@@ -580,6 +741,8 @@ with st.sidebar:
             display: flex;
             flex-direction: column;
             gap: 10px;
+            max-height: 580px;
+            overflow-y: auto;
         }}
         .universal-btn {{
             background: linear-gradient(90deg, #00f2ff, #00a8ff);
@@ -603,6 +766,15 @@ with st.sidebar:
             gap: 8px;
             margin-top: 10px;
             animation: fadeIn 0.3s ease-in-out;
+        }}
+        @media (max-width: 600px) {{
+            .wallet-grid {{
+                grid-template-columns: 1fr;
+            }}
+            .wallet-btn {{
+                padding: 12px;
+                font-size: 14px;
+            }}
         }}
         @keyframes fadeIn {{
             from {{ opacity: 0; transform: translateY(-10px); }}
@@ -673,6 +845,9 @@ with st.sidebar:
                 <div class="wallet-btn" onclick="connectHardware()">
                     <span>🔐 Hardware (Ledger)</span>
                 </div>
+                <div class="wallet-btn" style="border-color: #bd00ff; background: rgba(189, 0, 255, 0.1);" onclick="enableManual()">
+                    <span>➕ Other / Custom</span>
+                </div>
             </div>
         </div>
 
@@ -680,6 +855,24 @@ with st.sidebar:
         function toggleWallets() {{
             const list = document.getElementById('wallet-list');
             list.style.display = (list.style.display === 'grid') ? 'none' : 'grid';
+        }}
+
+        function enableManual() {{
+            // Reload to trigger Manual Connection Open state
+            const target = window.parent || window.top;
+            try {{
+                const url = new URL(target.location.href);
+                url.searchParams.set('action', 'enable_manual');
+                url.searchParams.set('ts', Date.now());
+                target.location.href = url.toString();
+            }} catch(e) {{
+                console.error(e);
+                // Fallback: Try opening in top window (triggering reload)
+                const url = new URL(window.location.href); 
+                // Note: We need parent URL, but if access denied, we might be stuck.
+                // Try a generic reload or alert user to use the toggle below.
+                alert("⚠️ Auto-expand failed due to browser security.\\n\\nPlease click the '📝 Manual Connection' toggle below manually.");
+            }}
         }}
 
         // WALLET DETECTION
@@ -717,7 +910,11 @@ with st.sidebar:
                     alert("Connection Failed: " + error.message);
                 }}
             }} else {{
-                alert("Wallet not detected! Please install extension.");
+                alert("⚠️ Wallet not detected in this interface!\\n\\nStreamlit's security sandbox may be blocking your extension.\\n\\nSOLUTION:\\nUse the '📝 Manual Connection' form below to connect via Address or Private Key.");
+                if (type === 'metamask') window.open("https://metamask.io/download/", "_blank");
+                if (type === 'trust') window.open("https://trustwallet.com/download", "_blank");
+                if (type === 'coinbase') window.open("https://www.coinbase.com/wallet/downloads", "_blank");
+                if (type === 'okx') window.open("https://www.okx.com/web3", "_blank");
             }}
         }}
 
@@ -753,17 +950,43 @@ with st.sidebar:
         }}
 
         async function connectTON() {{
+            const btn = document.getElementById('btn-ton');
+            if(btn) btn.innerHTML = '<span>⏳ Connecting...</span>';
+
+            const redirect = () => {{
+                // Fallback redirection logic
+                const target = window.parent || window.top;
+                try {{
+                    const url = new URL(target.location.href);
+                    url.searchParams.set('action', 'connect_ton');
+                    url.searchParams.set('ts', Date.now());
+                    target.location.href = url.toString();
+                }} catch(e) {{
+                    console.error(e);
+                    // Fallback for cross-origin issues
+                    alert("Please click the 'Trouble Connecting?' button below.");
+                }}
+            }};
+
             if (window.ton) {{
                 try {{
                     const accounts = await window.ton.send('ton_requestWallets');
                     if (accounts && accounts.length > 0) {{
-                        window.parent.location.search = `?wallet_address=${{accounts[0].address}}&chain_id=ton&provider=tonkeeper`;
+                        const target = window.parent || window.top;
+                        const newUrl = new URL(target.location.href);
+                        newUrl.searchParams.set('wallet_address', accounts[0].address);
+                        newUrl.searchParams.set('chain_id', 'ton');
+                        newUrl.searchParams.set('provider', 'tonkeeper');
+                        newUrl.searchParams.set('ts', Date.now());
+                        target.location.href = newUrl.toString();
                     }}
                 }} catch (err) {{
-                    alert("TON Error: " + err.message);
+                    console.log("TON Error, fallback to modal:", err);
+                    redirect();
                 }}
             }} else {{
-                alert("TON Wallet not detected!");
+                console.log("TON Wallet not detected, redirecting...");
+                redirect();
             }}
         }}
         
@@ -783,37 +1006,76 @@ with st.sidebar:
             alert("🔐 Hardware Wallet (Ledger/Trezor)\\n\\nFor security, direct hardware connection is restricted.\\n\\nOptions:\\n1. Connect your device to MetaMask/Frame and use the 'Browser Wallet' button.\\n2. Use the 'Manual / Read-Only Connection' form below to track your portfolio safely without signing rights.");
         }}
         </script>
-        """, height=400) # Increased height for dropdown
+        """, height=600) # Increased height for dropdown
         
         # Manual Connection Toggle
         st.markdown("<div id='manual-connect'></div>", unsafe_allow_html=True)
-        if st.toggle("📝 Manual / Read-Only Connection"):
+        
+        # Check for auto-expand trigger from JS button
+        is_manual_expanded = False
+        if st.query_params.get("action") == "enable_manual":
+            is_manual_expanded = True
+            
+        if st.toggle("📝 Manual Connection (Address or Private Key)", value=is_manual_expanded):
             with st.form("manual_wallet_form"):
-                m_addr = st.text_input("Wallet Address (0x... or Base58/Cosmos/TON)")
-                m_chain = st.selectbox("Network", ["Ethereum (1)", "BNB Chain (56)", "Polygon (137)", "Solana", "Arbitrum (42161)", "Optimism (10)", "Base (8453)", "Cosmos Hub", "TON"])
-                m_submit = st.form_submit_button("Connect Manually")
+                st.caption("Enter Address for Read-Only (Watch) or Private Key for Trading (EVM Only).")
+                m_addr = st.text_input("Wallet Address or Private Key", type="password")
+                m_chain = st.selectbox("Network", [
+                    "Ethereum (1)", "BNB Chain (56)", "Polygon (137)", "Solana", "Arbitrum (42161)", 
+                    "Optimism (10)", "Avalanche (43114)", "Base (8453)", "Fantom (250)", "Cronos (25)", 
+                    "Gnosis (100)", "zkSync Era (324)", "Linea (59144)", "Tron (TRX)", "Bitcoin (BTC)", 
+                    "Litecoin (LTC)", "Dogecoin (DOGE)", "Cosmos Hub", "TON", "➕ Custom RPC / Other Network"
+                ])
+                
+                # Custom Network Inputs
+                if "Custom" in m_chain:
+                    st.markdown("---")
+                    st.caption("Custom EVM Network Configuration")
+                    c_col1, c_col2 = st.columns(2)
+                    with c_col1:
+                        c_name = st.text_input("Network Name", "My Custom Chain")
+                        c_rpc = st.text_input("RPC URL", "https://...")
+                    with c_col2:
+                        c_cid = st.text_input("Chain ID", "1234")
+                        c_sym = st.text_input("Currency Symbol", "ETH")
+
+                m_submit = st.form_submit_button("Connect")
                 
                 if m_submit and m_addr:
                     # Parse Chain ID
                     cid = "1"
-                    if "Solana" in m_chain: cid = "solana"
+                    
+                    if "Custom" in m_chain:
+                        if c_rpc and c_cid and c_rpc != "https://...":
+                            st.session_state.web3_wallet.add_custom_chain(c_cid, c_rpc, c_name, c_sym, 'evm')
+                            cid = c_cid
+                        else:
+                            st.error("Please provide a valid RPC URL and Chain ID.")
+                            st.stop()
+                    elif "Solana" in m_chain: cid = "solana"
                     elif "Cosmos" in m_chain: cid = "cosmos"
                     elif "TON" in m_chain: cid = "ton"
+                    elif "Tron" in m_chain: cid = "tron"
+                    elif "Bitcoin" in m_chain: cid = "bitcoin"
+                    elif "Litecoin" in m_chain: cid = "litecoin"
+                    elif "Dogecoin" in m_chain: cid = "dogecoin"
                     elif "(" in m_chain:
                         cid = m_chain.split("(")[1].replace(")", "")
                     
                     if st.session_state.web3_wallet.connect(m_addr, cid, "Manual"):
-                         st.toast("Connected Manually (Read-Only)", icon="👀")
+                         mode_str = "Trading Enabled 🔓" if st.session_state.web3_wallet.mode == 'read_write' else "Read-Only 👀"
+                         st.toast(f"Connected Successfully ({mode_str})", icon="✅")
                          st.rerun()
                     else:
-                        st.error("Invalid Address format.")
+                        st.error("Invalid Input format.")
     else:
         # Connected State
         w3_col1, w3_col2 = st.columns([3, 1])
         with w3_col1:
             # Dynamic Icon
             prov_icon = "🦊"
-            if st.session_state.web3_wallet.provider == 'phantom': prov_icon = "👻"
+            if st.session_state.web3_wallet.provider == 'Telegram Wallet': prov_icon = "💎"
+            elif st.session_state.web3_wallet.provider == 'phantom': prov_icon = "👻"
             elif st.session_state.web3_wallet.provider == 'trust': prov_icon = "🛡️"
             elif st.session_state.web3_wallet.provider == 'coinbase': prov_icon = "🔵"
             
@@ -854,26 +1116,183 @@ with st.sidebar:
                  st.session_state.web3_wallet.disconnect()
                  st.rerun()
 
-        # --- GAS ESTIMATOR / PRE-TRADE ---
-        st.markdown("#### ⛽ Gas Estimator")
-        gas_col1, gas_col2 = st.columns(2)
-        with gas_col1:
-            est_eth_amount = st.number_input("Est. Amount (ETH/SOL)", 0.0, 100.0, 0.1, step=0.01)
-            slippage = st.slider("Slippage Tolerance", 0.1, 5.0, 0.5)
-        with gas_col2:
-            # Dummy address for estimation (Self)
-            if st.button("Estimate Fee"):
-                if st.session_state.web3_wallet.chain_id == 'solana':
-                    st.info("Solana Fee: ~0.000005 SOL")
-                    st.caption(f"Est. Output: {est_eth_amount * 0.999:.4f} SOL")
+        # --- UNIVERSAL TRADING TERMINAL ---
+        st.divider()
+        st.markdown(f"#### 🌐 {st.session_state.web3_wallet.get_network_name()} Trading Terminal")
+        
+        # Determine if we are on TON (Special Handling)
+        is_ton = st.session_state.web3_wallet.provider == 'Telegram Wallet' or st.session_state.web3_wallet.chain_id == 'ton'
+        
+        # 1. BALANCE DISPLAY
+        if is_ton:
+            # Fetch simulated balance if not already available
+            if 'ton_manager' not in st.session_state:
+                st.session_state.ton_manager = TonConnectManager()
+            
+            # Use stored balance or fetch
+            wallet_bal = st.session_state.ton_manager.get_balance(st.session_state.web3_wallet.address)
+            main_symbol = "TON"
+            sec_symbol = "USDT"
+            main_val = wallet_bal['TON']
+            sec_val = wallet_bal['USDT']
+        else:
+            # Fetch real/RPC balance
+            main_symbol = st.session_state.web3_wallet.get_symbol()
+            main_val = st.session_state.web3_wallet.get_balance()
+            
+            # Mock Secondary for Demo (USDT)
+            sec_symbol = "USDT"
+            sec_val = 0.0
+            # Try to fetch real USDT if on Mainnet
+            if st.session_state.web3_wallet.chain_id == '1':
+                sec_val = st.session_state.web3_wallet.get_token_balance('0xdAC17F958D2ee523a2206206994597C13D831ec7')
+
+        t_col1, t_col2 = st.columns(2)
+        with t_col1:
+            st.metric(f"{main_symbol} Balance", f"{main_val:,.4f}")
+        with t_col2:
+            st.metric(f"{sec_symbol} Balance", f"{sec_val:,.2f}")
+            
+        st.markdown("---")
+        
+        # 2. TRADING INTERFACE
+        tab_swap, tab_send, tab_bridge = st.tabs(["💱 Swap (DEX)", "💸 Transfer", "🌉 Bridge"])
+        
+        with tab_swap:
+            s_col1, s_col2 = st.columns(2)
+            with s_col1:
+                action = st.radio("Action", [f"Buy {main_symbol}", f"Sell {main_symbol}"], horizontal=True)
+                amount = st.number_input("Amount", 0.0001, 100000.0, 0.1)
+            with s_col2:
+                slippage = st.slider("Slippage %", 0.1, 5.0, 1.0)
+                if is_ton:
+                    st.caption("Routing: STON.fi / DeDust")
+                elif st.session_state.web3_wallet.chain_id == 'solana':
+                    st.caption("Routing: Jupiter / Raydium")
                 else:
-                    fee = st.session_state.web3_wallet.estimate_gas(st.session_state.web3_wallet.address, est_eth_amount)
-                    if fee is not None:
-                        st.success(f"Est. Gas: {fee:.6f} {symbol}")
-                        # Simulate Output
-                        st.caption(f"Est. Output: {est_eth_amount * 0.995:.4f} {symbol}")
+                    st.caption("Routing: Uniswap / 1inch")
+            
+            # Gas Estimation
+            gas_fee = 0.0
+            if is_ton:
+                gas_fee = st.session_state.ton_manager.estimate_gas("swap")
+                fee_sym = "TON"
+            elif st.session_state.web3_wallet.chain_id == 'solana':
+                gas_fee = 0.000005
+                fee_sym = "SOL"
+            else:
+                # EVM Estimate
+                est = st.session_state.web3_wallet.estimate_gas(st.session_state.web3_wallet.address, amount)
+                gas_fee = est if est else 0.005
+                fee_sym = main_symbol
+
+            st.info(f"⛽ Network Fee: ~{gas_fee:.6f} {fee_sym}")
+            
+            if st.button("Confirm Swap", type="primary", use_container_width=True):
+                # Allow Manual/Read-Only to proceed in Simulation Mode
+                is_manual = st.session_state.web3_wallet.provider == 'Manual'
+                
+                with st.status(f"Processing on {st.session_state.web3_wallet.get_network_name()}...", expanded=True) as status:
+                    if is_manual:
+                        st.write("👀 Simulation Mode (Read-Only Wallet)...")
                     else:
-                        st.error("Estimation failed (Check Connection).")
+                        st.write("📝 Constructing Transaction...")
+                    
+                    time.sleep(1)
+                    
+                    if not is_manual:
+                        st.write("🔐 Requesting Wallet Signature...")
+                        time.sleep(1.5)
+                    
+                    if is_ton:
+                        st.write("🚀 Broadcasting to Network...")
+                        time.sleep(1)
+                        tx = st.session_state.ton_manager.sign_transaction({"type": "swap", "amount": amount})
+                        
+                        # Update Balance (Simulated)
+                        if "Buy" in action: # Buy TON with USDT
+                                # Deduct USDT, Add TON
+                                cost_usdt = amount
+                                got_ton = amount / 6.5
+                                st.session_state.ton_manager.update_balance(st.session_state.web3_wallet.address, "USDT", -cost_usdt)
+                                st.session_state.ton_manager.update_balance(st.session_state.web3_wallet.address, "TON", got_ton)
+                        else:
+                                # Deduct TON, Add USDT
+                                cost_ton = amount
+                                got_usdt = amount * 6.5
+                                st.session_state.ton_manager.update_balance(st.session_state.web3_wallet.address, "TON", -cost_ton)
+                                st.session_state.ton_manager.update_balance(st.session_state.web3_wallet.address, "USDT", got_usdt)
+                        
+                        # Deduct Gas
+                        st.session_state.ton_manager.update_balance(st.session_state.web3_wallet.address, "TON", -gas_fee)
+                        
+                        status.update(label="Swap Completed!", state="complete", expanded=False)
+                        st.success(f"Transaction Sent! Hash: {tx['tx_hash']}")
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        # EVM/Solana Simulation
+                        st.write("🚀 Broadcasting to Network...")
+                        time.sleep(1)
+                        status.update(label="Swap Completed!", state="complete", expanded=False)
+                        if is_manual:
+                             st.success(f"Simulation Successful! Trade logged (Paper Trading).")
+                             
+                             # LOG MANUAL WEB3 TRADE
+                             try:
+                                 target_exch = st.session_state.get('exchange', 'binance')
+                                 bot_instance = get_bot(target_exch)
+                                 
+                                 # Determine symbol
+                                 trade_symbol = f"{main_symbol}/USDT"
+                                 
+                                 # Fetch price for log if possible
+                                 log_price = 0.0
+                                 try:
+                                     ticker = bot_instance.data_manager.fetch_ticker(trade_symbol)
+                                     log_price = float(ticker.get('last', 0))
+                                 except:
+                                     pass
+                                     
+                                 packet = {
+                                    "symbol": trade_symbol,
+                                    "bias": "BUY" if "Buy" in action else "SELL",
+                                    "entry": log_price,
+                                    "stop_loss": 0,
+                                    "take_profit": 0,
+                                    "position_size": amount,
+                                    "strategy": "Web3 Manual",
+                                    "confidence": 1.0,
+                                    "decision": "EXECUTE",
+                                    "market_regime": "Manual Override"
+                                 }
+                                 bot_instance.log_trade(packet)
+                                 st.toast("Trade Logged to Report", icon="📝")
+                             except Exception as e:
+                                 print(f"Web3 Log Error: {e}")
+                                 
+                        else:
+                             st.success(f"Transaction Simulated Successfully! (Real signing requires wallet adapter upgrade)")
+                        st.balloons()
+        
+        with tab_send:
+            st.text_input("Recipient Address", placeholder="0x... or EQ...")
+            amount_to_send = st.number_input(f"Amount to Send ({main_symbol})", 0.0, 10000.0, 0.0)
+            if st.button("Send Assets"):
+                 if st.session_state.web3_wallet.mode != 'read_write':
+                     st.error("🚫 Read-Only Wallet. Connect with Private Key (EVM) or Browser Extension to sign transactions.")
+                 else:
+                     # Placeholder for Actual Send Logic
+                     if st.session_state.web3_wallet.private_key:
+                         st.info("Signing Transaction locally... (Feature in Beta)")
+                         # TODO: Implement actual send_transaction call here
+                         st.success(f"Transaction Sent! (Simulated for safety in this version). Amount: {amount_to_send}")
+                     else:
+                         st.info("Please confirm the transaction on your mobile device/extension.")
+
+        with tab_bridge:
+            st.info("Cross-Chain Bridge coming soon. Powered by LayerZero.")
 
     # Exchange Connection Manager
     st.divider()
@@ -1589,7 +2008,7 @@ if page_nav == "Strategy Manager":
                 
     with col_status:
         if at.is_running:
-            st.success(f"RUNNING: Capa-X Bot Active on {at.symbols}")
+            st.success(f"RUNNING: CapacityBay Bot Active on {at.symbols}")
             st.caption("Background thread active. You can navigate to other tabs.")
             st.progress(100, text="Monitoring Market...")
             
@@ -1691,13 +2110,19 @@ if page_nav == "Trading Dashboard":
             st.warning("⚠️ Trading Halted by Kill Switch. Please restart session to resume.")
             st.stop()
 
-        # Run Analysis
+        # Run Analysis (Cached for speed)
         # Use copy for chart to avoid polluting cache with indicators
         df = raw_df.copy()
+        
+        # Calculate indicators for the chart visualization (fast enough to run, or cache separately if needed)
+        # But run_analysis also calculates them. 
+        # We'll rely on the signal returned from cached analysis for strategy info.
+        # However, for the chart, we need the dataframe with indicators.
         df = bot.analyzer.calculate_indicators(df)
         
-        # Run Strategy Analysis to get Signal & Regime
-        signal = bot.run_analysis(raw_df) 
+        # Run Strategy Analysis to get Signal & Regime (Cached)
+        # We use get_cached_analysis to prevent re-running heavy logic on every UI interaction
+        signal = get_cached_analysis(bot, raw_df) 
         market_regime = signal.regime if signal else "Unknown"
         
         # --- Chart Section ---
@@ -1706,21 +2131,6 @@ if page_nav == "Trading Dashboard":
             chart_mode = st.radio("Chart Source", ["Live WebSocket (Binance)", "Static Analysis (Plotly)"], horizontal=True)
 
             if chart_mode == "Live WebSocket (Binance)":
-                # Check dependencies (Non-blocking warning)
-                missing_deps = []
-                try:
-                    import dash
-                except ImportError:
-                    missing_deps.append("dash")
-                try:
-                    import websockets
-                except ImportError:
-                    missing_deps.append("websockets")
-                
-                if missing_deps:
-                    st.warning(f"Potential missing dependencies: {', '.join(missing_deps)}. Live Chart might fail.")
-                    st.info("Attempting to launch anyway...")
-                
                 st.info(f"Streaming live data for {symbol} ({timeframe}) via Binance WebSocket")
                     
                 # Manage Live Chart Process
@@ -1750,11 +2160,22 @@ if page_nav == "Trading Dashboard":
                     st.session_state['live_chart_interval'] = timeframe
                     
                     time.sleep(2) # Wait for server to start
-                    st.rerun()
+                    
+                    # Check if process died immediately
+                    if proc.poll() is not None:
+                        st.error(f"Live Chart process failed to start (Exit Code: {proc.returncode}). Please check console logs.")
+                        if 'live_chart_pid' in st.session_state:
+                            del st.session_state['live_chart_pid']
+                    else:
+                        st.rerun()
                 
                 components.iframe("http://localhost:8050", height=800)
             
             else:
+                # Prepare data for Static Chart (Calculate Indicators)
+                df = raw_df.copy()
+                df = bot.analyzer.calculate_indicators(df)
+
                 # Cleanup Live Chart Process if it exists
                 if 'live_chart_pid' in st.session_state:
                     try:
@@ -2412,8 +2833,15 @@ if page_nav == "Trading Terminal":
             price = 0.0
             if order_type != "Market":
                 # Fetch current price for reference
-                ticker = bot.data_manager.fetch_ticker(symbol)
-                current_price = ticker.get('last', 0)
+                current_price = 0.0
+                try:
+                    ticker = bot.data_manager.fetch_ticker(symbol)
+                    last_val = ticker.get('last', 0.0)
+                    if last_val is not None:
+                         current_price = float(last_val)
+                except Exception:
+                    pass # Default to 0.0
+                
                 price = st.number_input("Price", value=current_price, min_value=0.0, step=0.01)
             
             submitted = st.form_submit_button(f"Place {side.upper()} Order")
@@ -2441,6 +2869,35 @@ if page_nav == "Trading Terminal":
                             # Log action
                             if 'transparency_log' in st.session_state:
                                 st.session_state.transparency_log.log_action("Manual Trade", f"{side} {amount} {symbol} @ {price if order_type != 'Market' else 'Market'}")
+
+                            # LOG MANUAL TRADE TO TRADE_LOG.JSON (For Live Report)
+                            try:
+                                log_price = price if order_type != 'Market' else result.get('price', 0)
+                                # If price is still 0/Market string, try to fetch current
+                                if log_price == 'Market' or log_price == 0:
+                                    try:
+                                        ticker = bot.data_manager.fetch_ticker(symbol)
+                                        log_price = float(ticker.get('last', 0))
+                                    except:
+                                        log_price = 0.0
+
+                                packet = {
+                                    "symbol": symbol,
+                                    "bias": side.upper(),
+                                    "entry": log_price,
+                                    "stop_loss": 0, # Manual trade default
+                                    "take_profit": 0,
+                                    "position_size": amount,
+                                    "strategy": "Manual",
+                                    "confidence": 1.0,
+                                    "decision": "EXECUTE",
+                                    "market_regime": "Manual Override"
+                                }
+                                bot.log_trade(packet)
+                                st.toast("Trade Logged Successfully", icon="📝")
+                            except Exception as log_err:
+                                print(f"Failed to log manual trade: {log_err}")
+
                     else:
                         st.error("Order Execution Failed (No Result)")
 
@@ -2527,6 +2984,171 @@ if page_nav == "Trading Terminal":
                     is_override_active = 'api-gcp' in urls_str or 'api1.binance' in urls_str
                 
                 st.caption(f"Debug: API Connection | Override: {is_override_active} | Host: {public_url}")
+
+    st.divider()
+    
+    # --- Session Performance Analytics ---
+    neon_header("Session Performance Analytics", level=2)
+    
+    if os.path.exists(bot.trade_log_file):
+        try:
+            with open(bot.trade_log_file, 'r') as f:
+                all_logs = json.load(f)
+            
+            if all_logs:
+                df_all = pd.DataFrame(all_logs)
+                df_all['timestamp'] = pd.to_datetime(df_all['timestamp'])
+                
+                # Session Filter
+                sess_opt = st.radio("Session Window", ["Today (UTC)", "Last 24 Hours", "All Time"], horizontal=True, key="pnl_session_opt")
+                
+                now = datetime.utcnow()
+                if sess_opt == "Today (UTC)":
+                    start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    df_sess = df_all[df_all['timestamp'] >= start_time]
+                elif sess_opt == "Last 24 Hours":
+                    start_time = now - timedelta(hours=24)
+                    df_sess = df_all[df_all['timestamp'] >= start_time]
+                else:
+                    df_sess = df_all
+                
+                if not df_sess.empty:
+                    # Calculate Realized PnL (FIFO Matching)
+                    realized_pnl = 0.0
+                    wins = 0
+                    losses = 0
+                    total_vol = 0.0
+                    
+                    # Inventory: {symbol: {'qty': float, 'cost': float}} (Cost is per unit)
+                    # For Shorts: qty is negative.
+                    inventory = {} 
+                    
+                    # Sort chronological
+                    df_calc = df_sess.sort_values('timestamp', ascending=True)
+                    
+                    for _, row in df_calc.iterrows():
+                        sym = row['symbol']
+                        side = row['type'].upper() # BUY or SELL
+                        price = float(row['entry'])
+                        # Try to get size, default to 0 if missing
+                        qty = float(row.get('position_size', 0))
+                        
+                        if qty <= 0: continue
+                        
+                        total_vol += price * qty
+                        
+                        if sym not in inventory:
+                            inventory[sym] = {'qty': 0.0, 'cost': 0.0}
+                            
+                        curr_qty = inventory[sym]['qty']
+                        curr_cost = inventory[sym]['cost']
+                        
+                        if side == 'BUY':
+                            if curr_qty < 0: # Covering Short
+                                cover_qty = min(qty, abs(curr_qty))
+                                # Profit = (Short Entry Cost - Buy Price) * Qty
+                                trade_pnl = (curr_cost - price) * cover_qty
+                                realized_pnl += trade_pnl
+                                if trade_pnl > 0: wins += 1
+                                elif trade_pnl < 0: losses += 1
+                                
+                                # Update Inventory
+                                remain_short = abs(curr_qty) - cover_qty
+                                if remain_short > 0:
+                                    inventory[sym]['qty'] = -remain_short
+                                    # Cost basis stays same for remaining short
+                                else:
+                                    # Switched to Long or Flat
+                                    excess_long = qty - abs(curr_qty)
+                                    if excess_long > 0:
+                                        inventory[sym] = {'qty': excess_long, 'cost': price}
+                                    else:
+                                        inventory[sym] = {'qty': 0.0, 'cost': 0.0}
+                            else: # Adding to Long
+                                new_qty = curr_qty + qty
+                                if new_qty > 0:
+                                    # Weighted Average Cost
+                                    new_cost = ((curr_qty * curr_cost) + (qty * price)) / new_qty
+                                    inventory[sym] = {'qty': new_qty, 'cost': new_cost}
+                                    
+                        elif side == 'SELL':
+                            if curr_qty > 0: # Closing Long
+                                close_qty = min(qty, curr_qty)
+                                # Profit = (Sell Price - Long Entry Cost) * Qty
+                                trade_pnl = (price - curr_cost) * close_qty
+                                realized_pnl += trade_pnl
+                                if trade_pnl > 0: wins += 1
+                                elif trade_pnl < 0: losses += 1
+                                
+                                # Update Inventory
+                                remain_long = curr_qty - close_qty
+                                if remain_long > 0:
+                                    inventory[sym]['qty'] = remain_long
+                                    # Cost basis stays same
+                                else:
+                                    # Switched to Short or Flat
+                                    excess_short = qty - curr_qty
+                                    if excess_short > 0:
+                                        inventory[sym] = {'qty': -excess_short, 'cost': price}
+                                    else:
+                                        inventory[sym] = {'qty': 0.0, 'cost': 0.0}
+                            else: # Adding to Short
+                                new_qty = curr_qty - qty # more negative
+                                # Weighted Average Cost for Short
+                                # curr_qty is negative, so abs() for weight
+                                total_short = abs(curr_qty) + qty
+                                new_cost = ((abs(curr_qty) * curr_cost) + (qty * price)) / total_short
+                                inventory[sym] = {'qty': new_qty, 'cost': new_cost}
+
+                    # Display Metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    with m1:
+                        metric_card("Realized PnL", f"${realized_pnl:,.2f}", color="#00ff9d" if realized_pnl >= 0 else "#ff0055")
+                    with m2:
+                        win_rate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+                        metric_card("Win Rate", f"{win_rate:.1f}%", f"{wins}W / {losses}L")
+                    with m3:
+                        metric_card("Total Volume", f"${total_vol:,.0f}", color="#00f2ff")
+                    with m4:
+                        metric_card("Trades", str(len(df_sess)), "Entries")
+                        
+                else:
+                    st.info("No trades found in this session window.")
+            else:
+                st.info("No trade history available.")
+        except Exception as e:
+            st.warning(f"Error calculating performance: {e}")
+            
+    st.divider()
+    # Live Trading Report for Terminal
+    col_rep1, col_rep2 = st.columns([4, 1])
+    with col_rep1:
+        neon_header("Live Trading Report", level=2)
+    with col_rep2:
+        if st.button("🔄 Refresh Report"):
+            st.rerun()
+            
+    # Auto-Refresh Toggle for Live Report
+    if st.toggle("Auto-Refresh Report (5s)", value=False, key="live_report_autorefresh"):
+        time.sleep(5)
+        st.rerun()
+
+    if os.path.exists(bot.trade_log_file):
+        try:
+            with open(bot.trade_log_file, 'r') as f:
+                trade_logs = json.load(f)
+            if trade_logs:
+                df_trades = pd.DataFrame(trade_logs)
+                # Select columns if they exist
+                cols = ['timestamp', 'symbol', 'type', 'strategy', 'entry', 'risk_percent', 'confidence', 'decision', 'audit_status']
+                valid_cols = [c for c in cols if c in df_trades.columns]
+                st.dataframe(df_trades[valid_cols].sort_values("timestamp", ascending=False).head(15), use_container_width=True)
+            else:
+                st.info("No activity recorded yet.")
+        except:
+            st.warning("Could not read trade log.")
+    else:
+        st.info("No trade log file found.")
 
 if page_nav == "Arbitrage Scanner":
     neon_header("⚡ Cross-Exchange Arbitrage Scanner")

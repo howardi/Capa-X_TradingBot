@@ -8,6 +8,17 @@ except ImportError:
     import sys
     sys.exit(1)
 
+import sys
+import os
+# Ensure project root is in path for imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+try:
+    from core.dns_fix import apply_dns_fix
+    apply_dns_fix()
+except Exception as e:
+    print(f"DNS Fix Warning: {e}")
+
 import plotly.graph_objects as go
 import pandas as pd
 import websockets
@@ -179,7 +190,7 @@ if __name__ == '__main__':
     
     print(f"Starting Live Chart on port {args.port} for {args.symbol} {args.interval}")
     try:
-        app.run_server(debug=False, port=args.port, host='0.0.0.0')
+        app.run(debug=False, port=args.port, host='0.0.0.0')
     except Exception as e:
         print(f"Failed to start Dash server: {e}")
         # Optionally try next port or exit

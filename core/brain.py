@@ -2,11 +2,8 @@
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
-from core.ai import AIEngine
-from core.quantum import QuantumEngine  # New Quantum Integration
-from core.analysis import TechnicalAnalysis
 
-class CapaXBrain:
+class CapacityBayBrain:
     def __init__(self):
         self.regimes = {
             'trend_accel': 'Trend Acceleration',
@@ -18,6 +15,11 @@ class CapaXBrain:
             'struct_break': 'Structural Breakdown',
             'quantum_flux': 'Quantum Flux (Uncertainty)'
         }
+        
+        # Lazy Load AI and Quantum Engines to prevent circular imports and improve startup speed
+        from core.ai import AIEngine
+        from core.quantum import QuantumEngine
+        
         self.ai_engine = AIEngine()
         self.quantum = QuantumEngine()
         
@@ -94,6 +96,7 @@ class CapaXBrain:
         
         # Ensure indicators are calculated
         if 'atr' not in df.columns:
+            from core.analysis import TechnicalAnalysis
             df = TechnicalAnalysis.calculate_indicators(df)
         
         # Use Quantum Engine for Regime Detection

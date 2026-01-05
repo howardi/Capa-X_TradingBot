@@ -3,7 +3,7 @@ import re
 
 class NLPEngine:
     """
-    Natural Language Processing Engine for the 'Capa-X Assistant'.
+    Natural Language Processing Engine for the 'CapacityBay Assistant'.
     Parses user text/voice commands into executable bot actions.
     """
     def __init__(self, bot):

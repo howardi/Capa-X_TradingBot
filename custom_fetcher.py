@@ -28,7 +28,7 @@ class Settings:
     TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "15"))
     RETRIES = int(os.getenv("HTTP_RETRIES", "3"))
     BACKOFF = float(os.getenv("HTTP_BACKOFF", "0.5"))
-    USER_AGENT = os.getenv("HTTP_USER_AGENT", "CapaXBot/1.0 (+https://capax.local)")
+    USER_AGENT = os.getenv("HTTP_USER_AGENT", "CapacityBay/1.0 (+https://capacitybay.local)")
     
     # Binance
     BINANCE_BASE_URL = os.getenv("BINANCE_BASE_URL", "https://api.binance.com")
@@ -361,7 +361,7 @@ class BybitV5(ExchangeBase):
 # ==============================
 # Unified Interface
 # ==============================
-class CapaXTradingBot:
+class CapacityBayTradingBot:
     def __init__(self, binance_keys: Dict[str, str] = None, bybit_keys: Dict[str, str] = None):
         # Allow passing keys, or fall back to Settings
         b_key = binance_keys.get("api_key") if binance_keys else Settings.BINANCE_API_KEY
@@ -391,15 +391,5 @@ class CapaXTradingBot:
 # Main Execution (Test)
 # ==============================
 if __name__ == "__main__":
-    print(f"Bybit URL: {Settings.BYBIT_BASE_URL}")
-    print(f"Bybit Key: {Settings.BYBIT_API_KEY[:4]}***")
-    
-    bot = CapaXTradingBot()
-    
-    print("\n--- Fetching Balances ---")
-    balances = bot.fetch_all_balances()
-    print(json.dumps(balances, indent=2))
-    
-    print("\n--- Fetching Open Orders (Linear - BTCUSDT) ---")
-    orders = bot.fetch_all_open_orders(symbol="BTCUSDT")
-    print(json.dumps(orders, indent=2))
+    bot = CapacityBayTradingBot()
+    bot.run()

@@ -3,14 +3,14 @@ import unittest
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from core.brain import CapaXBrain
+from core.brain import CapacityBayBrain
 from core.risk import AdaptiveRiskManager
 from core.bot import TradingBot
 from core.models import Signal
 
-class TestCapaXEliteFeatures(unittest.TestCase):
+class TestCapacityBayEliteFeatures(unittest.TestCase):
     def setUp(self):
-        self.brain = CapaXBrain()
+        self.brain = CapacityBayBrain()
         self.risk = AdaptiveRiskManager(initial_capital=10000)
         # Mock Data Creation
         self.dates = pd.date_range(start='2024-01-01', periods=100, freq='H')

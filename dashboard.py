@@ -16,7 +16,7 @@ except ImportError:
 try:
     from config.settings import APP_NAME
 except ImportError:
-    APP_NAME = "Capa-X"
+    APP_NAME = "CapacityBay"
 
 # Set page config moved to dashboard_impl.py for better control
 # st.set_page_config(page_title=APP_NAME, layout="wide")

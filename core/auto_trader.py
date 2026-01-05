@@ -41,7 +41,7 @@ class Config:
 
 class AutoTrader:
     """
-    CapaXBot Logic Implementation.
+    CapacityBay Logic Implementation.
     Acts as an autonomous trading engine within the broader system.
     """
     def __init__(self, bot):
@@ -52,13 +52,13 @@ class AutoTrader:
         # Load Config
         self.cfg = Config("config.yaml")
         
-        # Use existing components mapped to CapaXBot structure
+        # Use existing components mapped to CapacityBay structure
         self.ex = bot.data_manager # ExchangeAdapter equivalent
         self.risk = bot.risk_manager
         self.exec = bot.execution
         
-        # Default to Smart Trend (Capa-X Standard)
-        self.signal = SmartTrendStrategy(bot) 
+        # Default to Smart Trend (CapacityBay Standard)
+        self.signal = SmartTrendStrategy(bot)  
         
         # Apply Config to Components
         self._apply_config()
@@ -175,6 +175,26 @@ class AutoTrader:
             })
             self.bot.save_positions()
             
+            # 8. Log Trade for Dashboard Report
+            try:
+                packet = {
+                    "symbol": symbol,
+                    "bias": side.upper(),
+                    "entry": price,
+                    "stop_loss": trade.get('sl', 0),
+                    "take_profit": trade.get('tp', 0),
+                    "position_size": qty,
+                    "strategy": getattr(self.signal, 'name', 'AutoTrader'),
+                    "confidence": conf,
+                    "decision": "EXECUTE",
+                    "market_regime": details.get('regime', 'Auto'),
+                    "execution_score": 1.0, # Assumed perfect execution
+                    "components": getattr(signal_obj, 'components', {})
+                }
+                self.bot.log_trade(packet)
+            except Exception as log_err:
+                logging.error(f"Failed to log auto trade: {log_err}")
+
             logging.info(f"Executed: {trade}")
             
         except Exception as e:

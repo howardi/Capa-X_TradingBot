@@ -61,7 +61,7 @@ class Strategy:
 
 class SmartTrendStrategy(Strategy):
     """
-    The 'Elite' Capa-X Smart Trend Strategy.
+    The 'Elite' CapacityBay Smart Trend Strategy.
     Combines Multi-Timeframe Analysis, Market Regime, Liquidity, and Risk Management.
     """
     def __init__(self, bot):

@@ -94,7 +94,12 @@ class DriftDetector:
         self.drift_status = {'status': status, 'score': avg_drift, 'details': drift_details}
         return self.drift_status
 
-class LSTMModel(nn.Module if TORCH_AVAILABLE else object):
+if TORCH_AVAILABLE:
+    BaseModule = nn.Module
+else:
+    BaseModule = object
+
+class LSTMModel(BaseModule):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
         if not TORCH_AVAILABLE: return
         super(LSTMModel, self).__init__()
@@ -111,7 +116,7 @@ class LSTMModel(nn.Module if TORCH_AVAILABLE else object):
         out = self.fc(out[:, -1, :])
         return out
 
-class TransformerModel(nn.Module if TORCH_AVAILABLE else object):
+class TransformerModel(BaseModule):
     """
     Simple Transformer Encoder for Time Series
     """

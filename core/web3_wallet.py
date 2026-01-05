@@ -1,4 +1,5 @@
 from web3 import Web3
+from eth_account import Account
 import logging
 import requests
 
@@ -13,9 +14,27 @@ class Web3Wallet:
             '10': {'name': 'Optimism', 'rpc': 'https://mainnet.optimism.io', 'symbol': 'ETH', 'type': 'evm'},
             '43114': {'name': 'Avalanche', 'rpc': 'https://api.avax.network/ext/bc/C/rpc', 'symbol': 'AVAX', 'type': 'evm'},
             '8453': {'name': 'Base', 'rpc': 'https://mainnet.base.org', 'symbol': 'ETH', 'type': 'evm'},
+            '250': {'name': 'Fantom', 'rpc': 'https://rpc.ftm.tools', 'symbol': 'FTM', 'type': 'evm'},
+            '25': {'name': 'Cronos', 'rpc': 'https://evm.cronos.org', 'symbol': 'CRO', 'type': 'evm'},
+            '100': {'name': 'Gnosis', 'rpc': 'https://rpc.gnosischain.com', 'symbol': 'xDAI', 'type': 'evm'},
+            '324': {'name': 'zkSync Era', 'rpc': 'https://mainnet.era.zksync.io', 'symbol': 'ETH', 'type': 'evm'},
+            '59144': {'name': 'Linea', 'rpc': 'https://rpc.linea.build', 'symbol': 'ETH', 'type': 'evm'},
             'solana': {'name': 'Solana', 'rpc': 'https://api.mainnet-beta.solana.com', 'symbol': 'SOL', 'type': 'svm'},
             'ton': {'name': 'TON', 'rpc': 'https://toncenter.com/api/v2/jsonRPC', 'symbol': 'TON', 'type': 'tvm'},
+            'tron': {'name': 'Tron', 'rpc': 'https://api.trongrid.io', 'symbol': 'TRX', 'type': 'tron'},
+            'bitcoin': {'name': 'Bitcoin', 'rpc': 'https://blockchain.info', 'symbol': 'BTC', 'type': 'utxo'},
+            'litecoin': {'name': 'Litecoin', 'rpc': 'https://api.blockcypher.com/v1/ltc/main', 'symbol': 'LTC', 'type': 'utxo'},
+            'dogecoin': {'name': 'Dogecoin', 'rpc': 'https://dogechain.info/api/v1', 'symbol': 'DOGE', 'type': 'utxo'},
             'cosmos': {'name': 'Cosmos Hub', 'rpc': 'https://cosmos-rpc.publicnode.com', 'api': 'https://cosmos-lcd.publicnode.com', 'symbol': 'ATOM', 'type': 'cosmos'}
+        }
+        
+    def add_custom_chain(self, chain_id, rpc_url, name, symbol, chain_type='evm'):
+        """Dynamically add a new network configuration"""
+        self.CHAINS[str(chain_id)] = {
+            'name': name,
+            'rpc': rpc_url,
+            'symbol': symbol,
+            'type': chain_type
         }
         
         # Default to Ethereum
@@ -24,8 +43,10 @@ class Web3Wallet:
         self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
         
         self.address = None
-        self.wallet_provider = None # e.g., 'MetaMask', 'Phantom'
+        self.private_key = None # Securely store key for signing (if provided)
+        self.wallet_provider = None # e.g., 'MetaMask', 'Phantom', 'Manual'
         self.connected = False
+        self.mode = 'read_only' # 'read_only' or 'read_write'
 
         # Minimal ERC20 ABI for Balance Fetching
         self.ERC20_ABI = [
@@ -33,34 +54,93 @@ class Web3Wallet:
             {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"}
         ]
 
-    def connect(self, address, chain_id='1', provider='Unknown'):
-        """Connects a user wallet address (from frontend)"""
+    def is_connected(self):
+        return self.connected
+
+    def connect(self, input_str, chain_id='1', provider='Unknown'):
+        """
+        Connects a user wallet.
+        Input can be an Address (Read-Only) or Private Key (Read-Write/Trading Enabled).
+        """
         self.provider = provider
+        self.private_key = None
+        self.mode = 'read_only'
+        self.chain_id = str(chain_id)
+        
+        # Clean input
+        input_str = input_str.strip()
+        
+        # 1. Check if input is a Private Key (EVM mainly)
+        # EVM Keys are 64 hex chars (32 bytes), sometimes with 0x
+        is_private_key = False
+        if len(input_str) >= 64:
+            try:
+                # Try deriving address from key (EVM)
+                account = Account.from_key(input_str)
+                self.address = account.address
+                self.private_key = input_str
+                self.mode = 'read_write'
+                is_private_key = True
+                
+                # Update RPC for EVM
+                if self.chain_id in self.CHAINS:
+                     self.rpc_url = self.CHAINS[self.chain_id]['rpc']
+                     self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
+                     
+                self.connected = True
+                return True
+            except Exception:
+                # Not a valid EVM key, proceed to address checks
+                pass
+
+        if is_private_key:
+            return True
+
+        # 2. Treat as Address (Read-Only)
         
         # Handle Solana/SVM Addresses
         if chain_id == 'solana':
             self.chain_id = 'solana'
-            self.address = address # No checksum for SOL
+            self.address = input_str # No checksum for SOL
+            self.connected = True
+            return True
+
+        # Handle Tron Addresses (Start with T, length 34)
+        if chain_id == 'tron':
+            if input_str.startswith('T') and len(input_str) == 34:
+                self.chain_id = 'tron'
+                self.address = input_str
+                self.connected = True
+                return True
+            else:
+                logging.warning(f"Invalid Tron address: {input_str}")
+                # Fallback allowed for manual
+                pass 
+
+        # Handle Bitcoin/UTXO Addresses
+        if chain_id in ['bitcoin', 'litecoin', 'dogecoin']:
+            self.chain_id = chain_id
+            self.address = input_str
             self.connected = True
             return True
 
         # Handle Cosmos Addresses
         if chain_id == 'cosmos':
             self.chain_id = 'cosmos'
-            self.address = address
+            self.address = input_str
             self.connected = True
             return True
 
         # Handle TON Addresses
         if chain_id == 'ton':
             self.chain_id = 'ton'
-            self.address = address
+            self.address = input_str
             self.connected = True
             return True
             
         # Handle EVM Addresses
-        if Web3.is_address(address):
-            self.address = Web3.to_checksum_address(address)
+        if Web3.is_address(input_str):
+            self.address = Web3.to_checksum_address(input_str)
             self.chain_id = str(chain_id)
             self.connected = True
             
@@ -70,6 +150,14 @@ class Web3Wallet:
                 self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
                 
             return True
+        
+        # Fallback for ANY string if manual mode (allows partial addresses for demo)
+        if provider == 'Manual':
+             self.address = input_str
+             self.chain_id = chain_id
+             self.connected = True
+             return True
+             
         return False
 
     def disconnect(self):
@@ -109,6 +197,51 @@ class Web3Wallet:
             # TON Balance (Basic Mock/Impl)
             elif chain_type == 'tvm':
                 # TON requires specific API handling, placeholder for now
+                return 0.0
+
+            # Tron Balance
+            elif chain_type == 'tron':
+                try:
+                    # TronGrid API
+                    # Note: Requires API Key for stability, but let's try public endpoint
+                    # https://api.trongrid.io/v1/accounts/{address}
+                    url = f"https://api.trongrid.io/v1/accounts/{self.address}"
+                    response = requests.get(url, timeout=5).json()
+                    if response.get('success') and response.get('data'):
+                        # Balance is in sun (1e-6)
+                        return float(response['data'][0].get('balance', 0)) / 1_000_000
+                except Exception as e:
+                    logging.error(f"Tron balance error: {e}")
+                return 0.0
+
+            # UTXO Balance (BTC/LTC/DOGE)
+            elif chain_type == 'utxo':
+                try:
+                    # Use public explorers (Rate limited usually)
+                    # Bitcoin: blockchain.info
+                    if chain_info['symbol'] == 'BTC':
+                        url = f"https://blockchain.info/q/addressbalance/{self.address}"
+                        response = requests.get(url, timeout=5)
+                        if response.status_code == 200:
+                            # Returns satoshis as plain text
+                            return float(response.text) / 100_000_000
+                    
+                    # Litecoin: blockcypher
+                    elif chain_info['symbol'] == 'LTC':
+                         # Free tier blockcypher
+                         url = f"https://api.blockcypher.com/v1/ltc/main/addrs/{self.address}/balance"
+                         response = requests.get(url, timeout=5).json()
+                         return float(response.get('balance', 0)) / 100_000_000
+                         
+                    # Dogecoin: dogechain.info
+                    elif chain_info['symbol'] == 'DOGE':
+                        url = f"https://dogechain.info/api/v1/address/balance/{self.address}"
+                        response = requests.get(url, timeout=5).json()
+                        if response.get('success'):
+                            return float(response.get('balance', 0)) # Already in DOGE? API says "balance"
+                        
+                except Exception as e:
+                    logging.error(f"UTXO balance error: {e}")
                 return 0.0
 
             # Cosmos Balance

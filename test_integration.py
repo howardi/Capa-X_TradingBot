@@ -2,7 +2,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
-from core.brain import CapaXBrain
+from core.brain import CapacityBayBrain
 from core.chaos import ChaosMonkey
 from core.quantum import QuantumEngine
 from core.defi import DeFiManager
@@ -30,7 +30,7 @@ class MockBot:
 
 def test_quantum_brain():
     print("Testing Quantum Brain...")
-    brain = CapaXBrain()
+    brain = CapacityBayBrain()
     
     # Create dummy market data
     dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq='h')

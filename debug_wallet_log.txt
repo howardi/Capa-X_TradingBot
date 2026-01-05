@@ -1,2 +1,2 @@
-[2026-01-04 10:56:27.660319] Starting Sync
-ERROR Fetching Spot: binance {"code":-2008,"msg":"Invalid Api-Key ID."}
+[2026-01-04 21:48:46.524231] Starting Sync
+ERROR Fetching Spot: Invalid API Key. Please update your credentials.

@@ -19,16 +19,11 @@
         "2fa_enabled": false,
         "2fa_secret": null,
         "created_at": "2025-12-28 17:19:50.486910",
-        "last_login": "2026-01-04 10:54:10.093024",
+        "last_login": "2026-01-05 00:10:14.122109",
         "settings": {
             "theme": "dark",
             "notifications_enabled": true
         },
-        "api_keys": {
-            "binance": {
-                "api_key": "3MmGYZOzWqWD8IQZB9pOoCZlT4eSLG0RwBC8U2jqQEjQ7EpvtyuIwBhTQ0n9ESoS",
-                "api_secret": "etIg4wOuIQho8DVI4CKv0PGYqALJEr0Ul3fQN50GbLkxDH0oicNJOfDdA2JEAMDv"
-            }
-        }
+        "api_keys": {}
     }
 }
