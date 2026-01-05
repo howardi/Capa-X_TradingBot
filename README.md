@@ -1,140 +1,104 @@
 # CapacityBay Trading Bot 🤖📈
 
-**Professional Grade Multi-Market Algorithmic Trading System**
-
-CapacityBay is an advanced, AI-powered trading bot designed for institutional-grade performance across Crypto CEX (Centralized Exchanges) and DEX (Decentralized Exchanges). It features a unique 4-mode architecture allowing for safe simulation, secure proxy routing, direct high-frequency execution, and Web3 integration.
+Institutional‑grade, AI‑powered trading across CEX and DEX with elite risk controls, optimizer mode, and transparent, audit‑friendly execution.
 
 ---
 
-## 🌟 Key Features
+## 🌟 Highlights
 
-### 1. Multi-Mode Trading Environments
-*   **🟢 Demo Mode**: Risk-free paper trading with simulated balances. Perfect for strategy testing and validation without capital exposure.
-*   **🛡️ CEX Proxy Mode**: Secure traffic routing for restricted regions (e.g., accessing global exchanges via proxy). Maintains a separate risk profile.
-*   **⚡ CEX Direct Mode**: Direct API connection for minimum latency execution (Binance, Bybit, etc.).
-*   **🦄 DEX Mode (Web3)**: On-chain trading via smart contracts (Uniswap/PancakeSwap) with gas optimization and wallet integration.
-
-### 2. AI & Machine Learning Core
-*   **🧠 CapacityBay Brain**: Ensemble model combining LSTM (Long Short-Term Memory), Transformers, and Reinforcement Learning (PPO).
-*   **📊 Sentiment Engine**: Real-time NLP analysis of news and social media to gauge market emotion.
-*   **🔮 Quantum Features**: Experimental probability distribution modeling for extreme market events.
-
-### 3. Adaptive Risk Management
-*   **🛡️ Isolated Risk Profiles**: Separate drawdown limits, win/loss tracking, and stop-losses for each trading mode.
-*   **⚖️ Dynamic Position Sizing**: Kelly Criterion-based allocation adjusted by market volatility and regime.
-*   **🛑 Circuit Breakers**: Automatic trading halt upon breaching max daily loss thresholds.
-
-### 4. Real-Time Dashboard
-*   Built with **Streamlit** for monitoring PnL, active positions, and AI signals.
-*   Visualizes model confidence, market regime classification, and live asset prices.
+- Multi‑mode trading: `Demo`, `CEX_Proxy`, `CEX_Direct`, `DEX` with isolated risk per mode.
+- Optimizer Mode selects the best strategy per regime and scales position size by allocation weights.
+- Strict risk controls: dynamic confidence gating, regime‑aware cooldowns, kill‑switches, portfolio limits.
+- Profit protection: breakeven, ATR trailing with Chandelier Exit, multi‑target partial take‑profits.
+- Full audit trail: pre‑trade explanation logged with strategy, regime, entry, SL/TP, size, confidence.
 
 ---
 
-## 🚀 Quick Start (Local Python)
+## 🚀 Quick Start (Local)
 
-### Prerequisites
-*   **Python 3.9+**
-*   **Node.js** (optional, for specific plugins)
-
-### Installation
-
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/howardi/CapacityBay_TradingBot.git
-    cd CapacityBay_TradingBot
-    ```
-
-2.  **Install Dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3.  **Configuration**
-    Copy `.env.example` to `.env` and fill in your details:
-    ```bash
-    cp .env.example .env
-    # Edit .env with your API Keys
-    ```
-
-4.  **Run the Bot**
-    *   **UI Dashboard:** `streamlit run dashboard.py`
-    *   **Trading Core:** `python main.py`
+- Python 3.9+
+- Clone, install, configure, run:
+  - `git clone https://github.com/howardi/Capa-X_TradingBot.git && cd Capa-X_TradingBot`
+  - `pip install -r requirements.txt`
+  - Copy `.env.example` to `.env` and set your keys
+  - Dashboard: `streamlit run dashboard.py`
+  - Core loop: `python main.py`
 
 ---
 
-## 🐳 Docker / Local Live Trading (Recommended)
+## 🐳 Docker (Recommended)
 
-Running with Docker ensures the bot operates in an isolated, stable environment, identical to production servers. This is the **best method for live trading**.
-
-### 1. Prerequisites
-*   Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-
-### 2. Setup
-1.  **Clone & Enter Directory:**
-    ```bash
-    git clone https://github.com/howardi/CapacityBay_TradingBot.git
-    cd CapacityBay_TradingBot
-    ```
-
-2.  **Configure Environment:**
-    Ensure your `.env` file is created and populated with valid API keys (see `.env.example`).
-    ```bash
-    # Windows
-    copy .env.example .env
-    # Linux/Mac
-    cp .env.example .env
-    ```
-
-### 3. Run Commands
-Start the entire system (Trading Core + Dashboard + Redis) in the background:
-```bash
-docker-compose up -d --build
-```
-
-### 4. Monitor
-*   **View Dashboard:** Open `http://localhost:8501` in your browser.
-*   **View Trading Logs:**
-    ```bash
-    docker-compose logs -f trading-bot
-    ```
-*   **Stop System:**
-    ```bash
-    docker-compose down
-    ```
+- `docker-compose up -d --build`
+- Dashboard: `http://localhost:8501`
+- Logs: `docker-compose logs -f trading-bot`
+- Stop: `docker-compose down`
 
 ---
 
-## 🛠️ Architecture Overview
+## 🧠 Strategies & Optimizer
 
-The bot is modularized into `core/` components:
-
-*   **`core/bot.py`**: Central controller managing the main loop and mode switching.
-*   **`core/strategies.py`**: Implementation of trading strategies (`SniperStrategy`, `MeanReversion`, etc.).
-*   **`core/risk.py`**: `AdaptiveRiskManager` enforcing drawdown limits and position sizing.
-*   **`core/execution.py`**: Routing logic that directs orders to CCXT (CEX) or Web3 (DEX) based on the active mode.
-*   **`core/data.py`**: Unified data fetcher with proxy support and OHLCV standardization.
-*   **`core/brain.py`**: The AI inference engine.
+- Strategies: Smart Trend, Sniper, Weighted Ensemble, Liquidity Sweep, Order Flow, Swing Range.
+- Optimizer Mode: selects the best strategy per regime and scales size by weights.
+  - Code: `core/bot.py:844` chooses strategy using `self.profit_optimizer.get_allocation_weights` and applies `allocation_weight` to `position_size` in `core/bot.py:866–871`.
+  - Default mode: `core/bot.py:99` sets `"Profit Optimization Layer"` as the active mode.
 
 ---
 
-## 📦 Cloud Deployment
+## 🛡️ Risk & Execution Discipline
 
-### Railway / Render (Production)
-1.  Fork this repo.
-2.  Connect to Railway/Render.
-3.  Add Environment Variables (copy from your `.env`).
-4.  Deploy! (The `Dockerfile` handles the rest).
-
-### Vercel (Monitor Only)
-*   **Status Page Only**: The Vercel configuration deploys a lightweight API Status Page.
-*   **Limitation**: The full trading bot **cannot** run on Vercel Serverless.
-*   See `DEPLOY.md` for full deployment details.
-
----
-
-## ⚠️ Disclaimer
-*This software is for educational purposes only. Cryptocurrency trading involves high risk of financial loss. The developers are not responsible for any financial losses incurred while using this bot. Always test in **Demo Mode** first.*
+- Dynamic confidence threshold:
+  - Base from `config/trading_config.py:27–30`, auto‑raises with drawdown and loss streaks.
+  - Gate: `core/bot.py:936–941` skips execution if `signal.confidence` < threshold.
+- Regime‑aware cooldown:
+  - `core/bot.py:921–926` applies 20 min in volatile regimes, else 15 min; bypass only for very high confidence (≥ 0.85).
+- Kill‑switch and portfolio limits:
+  - Kill‑switch: `core/bot.py:929–933` halts during drawdowns.
+  - Limits: `core/bot.py:959–965` blocks trades exceeding exposure.
+- Sanity checks and pre‑trade explanation:
+  - Valid levels/size: `core/bot.py:966–970`.
+  - Explanation string: `core/bot.py:972–978`; logged in `core/bot.py:616–630`.
 
 ---
 
-*Built with ❤️ by [Howard](https://github.com/howardi)*
+## 🎯 Profit Protection
+
+- Breakeven after 1R and ATR trailing:
+  - `core/bot.py:742–753` (long) and `core/bot.py:755–764` (short).
+- Chandelier Exit integration:
+  - `core/bot.py:750–753` for long; `core/bot.py:761–764` for short.
+- Multi‑target partials:
+  - TP1 50% at 1.5R: `core/bot.py:766–787`.
+  - TP2 50% of remaining at 2.5R: `core/bot.py:787–803`.
+
+---
+
+## 📊 Dashboard & Monitor
+
+- Local Streamlit dashboard: `dashboard.py` at `http://localhost:8501`.
+- Vercel Lite Monitor (status/API only): `vercel.json` routes to `api/index.py` with `/dashboard` and `/api/status`.
+- Templates: `api/templates/dashboard.html`.
+
+---
+
+## 📦 Deployment
+
+- Railway/Render (full bot with Docker): see `DEPLOY.md`.
+- Vercel (Lite monitor only): serverless status, not full trading loop.
+
+---
+
+## Configuration Tips
+
+- Confidence floor: `config/trading_config.py:27–30` (`min_confidence_threshold`).
+- Asset/timeframe defaults: `config/settings.py`.
+- Risk sizing, kill‑switch, volatility handling: `core/risk.py`.
+
+---
+
+## Disclaimer
+
+This software is for educational purposes only. Trading involves significant risk. Use Demo Mode first.
+
+---
+
+Built with ❤️ by [Howard](https://github.com/howardi)
