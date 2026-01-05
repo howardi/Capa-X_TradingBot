@@ -329,6 +329,34 @@
                     <div id="demo-alert" class="alert alert-warning mt-3" style="display:none;"></div>
                 </div>
             </div>
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="fas fa-history me-2"></i> Trade History</span>
+                    <div>
+                        <button class="btn btn-outline-secondary btn-sm me-2" onclick="exportHistory()"><i class="fas fa-download me-2"></i>Export CSV</button>
+                        <button class="btn btn-outline-danger btn-sm" onclick="clearHistory()"><i class="fas fa-trash me-2"></i>Clear</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-dark table-striped mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Side</th>
+                                    <th>Symbol</th>
+                                    <th>Qty</th>
+                                    <th>Entry</th>
+                                    <th>Exit</th>
+                                    <th>PnL</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody id="demo-history"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -359,7 +387,7 @@
         const fmt = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         let lastPrices = {};
         function getState(){
-            try { const s = JSON.parse(localStorage.getItem('capax_demo')||'{}'); if(!s.balance && s.balance!==0){ s.balance = 10000; } if(!Array.isArray(s.positions)){ s.positions = []; } return s; } catch(e){ return { balance: 10000, positions: [] }; }
+            try { const s = JSON.parse(localStorage.getItem('capax_demo')||'{}'); if(!s.balance && s.balance!==0){ s.balance = 10000; } if(!Array.isArray(s.positions)){ s.positions = []; } if(!Array.isArray(s.history)){ s.history = []; } return s; } catch(e){ return { balance: 10000, positions: [], history: [] }; }
         }
         function setState(s){ localStorage.setItem('capax_demo', JSON.stringify(s)); }
         function getUI(){ try { const u = JSON.parse(localStorage.getItem('capax_demo_ui')||'{}'); if(!u.presetSide){ u.presetSide = 'BUY'; } if(!u.mode){ u.mode = 'price'; } if(!u.symbol){ u.symbol = 'BTCUSDT'; } if(typeof u.trailingEnabled==='undefined'){ u.trailingEnabled = false; } if(typeof u.breakevenEnabled==='undefined'){ u.breakevenEnabled = false; } if(!u.trailing){ u.trailing = ''; } return u; } catch(e){ return { presetSide:'BUY', mode:'price', symbol:'BTCUSDT', trailingEnabled:false, breakevenEnabled:false, trailing:'' }; } }
@@ -433,18 +461,95 @@
             if(trailingEnabled && trailing>0){ pos.trailing = trailing; if(side==='BUY'){ pos.maxPrice = price; } else { pos.minPrice = price; } }
             if(breakeven && sl){ const rdist = Math.abs(price - sl); if(rdist>0){ pos.rdist = rdist; pos.breakeven = true; } }
             s.positions.push(pos); setState(s); updateBalanceUI(); lastPrices[sym] = price; updatePositionsPnL(); }
-        function autoClosePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); setState(s); }
-        function closeAllPositions(){ const s = getState(); if(!s.positions.length){ return; } const prices = {}; s.positions.forEach(p=>{ prices[p.symbol] = lastPrices[p.symbol] || p.entry; }); for(let i=s.positions.length-1;i>=0;i--){ const p=s.positions[i]; const price = prices[p.symbol]; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); } setState(s); updateBalanceUI(); updatePositionsPnL(); }
-        function closePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); setState(s); updateBalanceUI(); updatePositionsPnL(); }
-        function resetDemo(){ setState({ balance: 10000, positions: [] }); updateBalanceUI(); refreshAllPrices(); }
+        function addToHistory(s, p, price, reason){
+            const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty;
+            const rec = {
+                time: new Date().toISOString(),
+                symbol: p.symbol,
+                side: p.side,
+                qty: p.qty,
+                entry: p.entry,
+                exit: price,
+                pnl: pnl,
+                reason: reason
+            };
+            if(!s.history) s.history = [];
+            s.history.unshift(rec);
+            if(s.history.length > 200) s.history.pop();
+        }
+        function autoClosePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; addToHistory(s, p, price, 'Auto'); s.positions.splice(i,1); setState(s); updateHistoryUI(); }
+        function closeAllPositions(){ const s = getState(); if(!s.positions.length){ return; } const prices = {}; s.positions.forEach(p=>{ prices[p.symbol] = lastPrices[p.symbol] || p.entry; }); for(let i=s.positions.length-1;i>=0;i--){ const p=s.positions[i]; const price = prices[p.symbol]; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; addToHistory(s, p, price, 'Flatten'); s.positions.splice(i,1); } setState(s); updateBalanceUI(); updatePositionsPnL(); updateHistoryUI(); }
+        function closePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; addToHistory(s, p, price, 'Manual'); s.positions.splice(i,1); setState(s); updateBalanceUI(); updatePositionsPnL(); updateHistoryUI(); }
+        function resetDemo(){ 
+            const s = getState(); 
+            s.balance = 10000; 
+            s.positions = []; 
+            // Keep history intact
+            setState(s); 
+            updateBalanceUI(); 
+            refreshAllPrices(); 
+            updatePositionsPnL();
+            updateHistoryUI();
+        }
         function applyStart(){ const val = parseFloat(document.getElementById('demo-start').value||'0'); if(val && val>0){ const s = getState(); s.balance = val; setState(s); updateBalanceUI(); } }
         function updateModeVisibility(){ const mode = document.getElementById('demo-mode').value; const pw=document.getElementById('demo-sl').parentElement; const tw=document.getElementById('demo-tp').parentElement; const sp=document.getElementById('demo-slp-wrap'); const tpw=document.getElementById('demo-tpp-wrap'); const tpreset=document.getElementById('demo-tpreset-wrap'); if(mode==='percent'){ pw.style.display='none'; tw.style.display='none'; sp.style.display='block'; tpw.style.display='block'; tpreset.style.display='block'; } else { pw.style.display='block'; tw.style.display='block'; sp.style.display='none'; tpw.style.display='none'; tpreset.style.display='none'; } }
         function updateModeBadge(){ const mode = document.getElementById('demo-mode').value; const badge = document.getElementById('demo-mode-badge'); if(badge){ badge.textContent = mode==='percent' ? 'Percent Mode' : 'Price Mode'; badge.className = mode==='percent' ? 'badge bg-warning text-dark' : 'badge bg-info text-dark'; } }
         function showAlert(msg){ const el = document.getElementById('demo-alert'); if(!el) return; el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
         function clearAlert(){ showAlert(''); }
         function updatePresetStates(){ const mode = document.getElementById('demo-mode').value; const slVal = parseFloat(document.getElementById('demo-sl').value||'0'); const tp1=document.getElementById('tp-1r'); const tp15=document.getElementById('tp-1_5r'); const tp2=document.getElementById('tp-2r'); const needSL = mode==='price'; const disabled = needSL && (!slVal || slVal<=0); [tp1,tp15,tp2].forEach(b=>{ if(b){ b.disabled = disabled; b.classList.toggle('disabled', disabled); } }); }
+        function updateHistoryUI(){
+            const s = getState();
+            const tbody = document.getElementById('demo-history');
+            tbody.innerHTML = '';
+            if(!s.history || !s.history.length){
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No trade history yet.</td></tr>';
+                return;
+            }
+            s.history.forEach(h => {
+                const tr = document.createElement('tr');
+                const pnlClass = h.pnl >= 0 ? 'text-success' : 'text-danger';
+                const timeStr = new Date(h.time).toLocaleTimeString();
+                tr.innerHTML = `
+                    <td><small>${timeStr}</small></td>
+                    <td><span class="badge ${h.side==='BUY'?'bg-success':'bg-danger'}">${h.side}</span></td>
+                    <td>${h.symbol}</td>
+                    <td>${h.qty.toFixed(6)}</td>
+                    <td>${fmt(h.entry)}</td>
+                    <td>${fmt(h.exit)}</td>
+                    <td class="${pnlClass}">${fmt(h.pnl)}</td>
+                    <td><small class="text-muted">${h.reason}</small></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        function exportHistory(){
+            const s = getState();
+            if(!s.history || !s.history.length){ showAlert('No history to export.'); return; }
+            const headers = ['Time', 'Symbol', 'Side', 'Qty', 'Entry', 'Exit', 'PnL', 'Reason'];
+            const rows = s.history.map(h => [
+                h.time, h.symbol, h.side, h.qty, h.entry, h.exit, h.pnl, h.reason
+            ]);
+            let csv = headers.join(',') + '\n';
+            rows.forEach(r => csv += r.join(',') + '\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('hidden', '');
+            a.setAttribute('href', url);
+            a.setAttribute('download', 'trade_history.csv');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+        function clearHistory(){
+            if(!confirm('Clear all trade history?')) return;
+            const s = getState();
+            s.history = [];
+            setState(s);
+            updateHistoryUI();
+        }
         function initDemo(){ const ui=getUI(); document.getElementById('preset-side').value = ui.presetSide; document.getElementById('demo-mode').value = ui.mode; document.getElementById('demo-symbol').value = ui.symbol; document.getElementById('demo-trailing-enabled').checked = !!ui.trailingEnabled; document.getElementById('demo-breakeven-enabled').checked = !!ui.breakevenEnabled; if(ui.trailing!==''){ document.getElementById('demo-trailing').value = ui.trailing; }
-            updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); setInterval(refreshAllPrices, 10000);
+            updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); updateHistoryUI(); setInterval(refreshAllPrices, 10000);
             document.getElementById('demo-buy').onclick = () => { document.getElementById('preset-side').value = 'BUY'; setUI({ presetSide:'BUY' }); clearAlert(); openPosition('BUY'); };
             document.getElementById('demo-sell').onclick = () => { document.getElementById('preset-side').value = 'SELL'; setUI({ presetSide:'SELL' }); clearAlert(); openPosition('SELL'); };
             document.getElementById('demo-reset').onclick = () => { resetDemo(); };
