@@ -75,15 +75,22 @@ Institutional‑grade, AI‑powered trading across CEX and DEX with elite risk c
 ## 📊 Dashboard & Monitor
 
 - Local Streamlit dashboard: `dashboard.py` at `http://localhost:8501`.
-- Vercel Lite Monitor (status/API only): `vercel.json` routes to `api/index.py` with `/dashboard` and `/api/status`.
-- Templates: `api/templates/dashboard.html`.
+- Vercel Lite Monitor: public status at `/` and `/status`, authenticated demo dashboard at `/dashboard`.
+- Features (Lite): exchange health pings, latency chart, auto‑refresh price, multi‑asset demo trading.
+- Demo trading: percent‑mode SL/TP, R‑multiple TP presets, trailing stop, breakeven, flatten positions.
+- Auth (Lite): access code `admin` sets `capax_auth` cookie for `/dashboard`.
+- Routing: `vercel.json` routes all to `api/index.py`.
 
 ---
 
 ## 📦 Deployment
 
 - Railway/Render (full bot with Docker): see `DEPLOY.md`.
-- Vercel (Lite monitor only): serverless status, not full trading loop.
+- Vercel (Lite monitor): deploy `api/index.py` with `@vercel/python`.
+  - Ensure `vercel.json` exists.
+  - Connect repository to Vercel for auto‑deploy on `git push`.
+  - Or use CLI: `vercel --prod`.
+  - Note: Lite monitor does not run the full trading loop; for 24/7 trading use Docker.
 
 ---
 

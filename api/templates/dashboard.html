@@ -37,7 +37,7 @@
         </div>
     </nav>
 
-    <div class="container">
+        <div class="container">
         <!-- Alert Banner -->
         <div class="alert alert-info border-0 bg-dark-subtle text-white mb-4">
             <i class="fas fa-info-circle me-2"></i>
@@ -91,6 +91,9 @@
                         </a>
                         <a href="https://github.com/howardi/Capa-X_TradingBot#-%F0%9F%8F%9F-highlights" target="_blank" class="btn btn-outline-info">
                             <i class="fas fa-book me-2"></i> Readme Highlights
+                        </a>
+                        <a href="/status" class="btn btn-outline-secondary">
+                            <i class="fas fa-satellite-dish me-2"></i> Status Page
                         </a>
                     </div>
                     <div class="card-footer text-muted small" id="analysis-result" style="display: none;">
@@ -179,6 +182,133 @@
                 </div>
             </div>
         </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fas fa-gamepad me-2"></i> Demo Practice Trading (Lite)
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <div class="text-muted small">Balance</div>
+                                <div class="metric-value" id="demo-balance">$10,000.00</div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="text-muted small" id="demo-symbol-label">BTC/USDT Price</div>
+                                <div class="metric-value" id="demo-price">${{ "{:,.2f}".format(btc_price) }}</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Symbol</label>
+                                <select class="form-select" id="demo-symbol">
+                                    <option value="BTCUSDT" selected>BTC/USDT</option>
+                                    <option value="ETHUSDT">ETH/USDT</option>
+                                    <option value="BNBUSDT">BNB/USDT</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Amount (USDT)</label>
+                                <input type="number" min="1" step="1" class="form-control" id="demo-amount" placeholder="e.g. 250" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Stop Loss (Price)</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="demo-sl" placeholder="e.g. 60000" />
+                                <div class="mt-2 d-flex gap-2">
+                                    <button class="btn btn-outline-secondary btn-sm" id="sl-1p">SL 1%</button>
+                                    <button class="btn btn-outline-secondary btn-sm" id="sl-1_5p">SL 1.5%</button>
+                                    <button class="btn btn-outline-secondary btn-sm" id="sl-2p">SL 2%</button>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Take Profit (Price)</label>
+                                <input type="number" min="0" step="0.01" class="form-control" id="demo-tp" placeholder="e.g. 70000" />
+                                <div class="mt-2 d-flex gap-2">
+                                    <button class="btn btn-outline-secondary btn-sm" id="tp-1r">TP 1R</button>
+                                    <button class="btn btn-outline-secondary btn-sm" id="tp-1_5r">TP 1.5R</button>
+                                    <button class="btn btn-outline-secondary btn-sm" id="tp-2r">TP 2R</button>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Preset Side</label>
+                                <select class="form-select" id="preset-side">
+                                    <option value="BUY" selected>Long (BUY)</option>
+                                    <option value="SELL">Short (SELL)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">SL/TP Mode</label>
+                                <select class="form-select" id="demo-mode">
+                                    <option value="price" selected>Price</option>
+                                    <option value="percent">Percent</option>
+                                </select>
+                                <div class="mt-2"><span id="demo-mode-badge" class="badge bg-info text-dark">Price Mode</span></div>
+                            </div>
+                            <div class="col-md-3" id="demo-slp-wrap" style="display:none;">
+                                <label class="form-label">Stop Loss (%)</label>
+                                <input type="number" min="0" step="0.1" class="form-control" id="demo-slp" placeholder="e.g. 1.5" title="Percent stop relative to current price. BUY lowers, SELL raises." />
+                            </div>
+                            <div class="col-md-3" id="demo-tpp-wrap" style="display:none;">
+                                <label class="form-label">Take Profit (%)</label>
+                                <input type="number" min="0" step="0.1" class="form-control" id="demo-tpp" placeholder="e.g. 2.5" title="Percent target relative to current price. BUY raises, SELL lowers." />
+                            </div>
+                            <div class="col-md-3" id="demo-tpreset-wrap" style="display:none;">
+                                <label class="form-label">TP Preset (×R)</label>
+                                <select class="form-select" id="demo-tpreset">
+                                    <option value="none" selected>None</option>
+                                    <option value="1">1×</option>
+                                    <option value="1.5">1.5×</option>
+                                    <option value="2">2×</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Trailing Stop (%)</label>
+                                <div class="d-flex gap-2">
+                                    <input type="checkbox" id="demo-trailing-enabled" class="form-check-input" />
+                                    <input type="number" min="0" step="0.1" class="form-control" id="demo-trailing" placeholder="e.g. 1.2" title="Dynamic SL updates: BUY trails below max; SELL trails above min." />
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Breakeven</label>
+                                <div class="d-flex gap-2 align-items-center">
+                                    <input type="checkbox" id="demo-breakeven-enabled" class="form-check-input" />
+                                    <span class="text-muted small">Move SL to entry at ≥1R</span>
+                                </div>
+                            </div>
+                            <div class="col-md-3 d-flex gap-2">
+                                <button class="btn btn-success w-50" id="demo-buy"><i class="fas fa-arrow-up me-2"></i>Buy</button>
+                                <button class="btn btn-danger w-50" id="demo-sell"><i class="fas fa-arrow-down me-2"></i>Sell</button>
+                            </div>
+                        </div>
+                        <div class="mt-3 d-flex gap-2">
+                            <button class="btn btn-outline-warning btn-sm" id="demo-reset"><i class="fas fa-undo me-2"></i>Reset Demo</button>
+                            <input type="number" min="100" step="100" class="form-control form-control-sm w-auto" id="demo-start" placeholder="Start Balance (USDT)" />
+                            <button class="btn btn-outline-info btn-sm" id="demo-apply-start"><i class="fas fa-sliders-h me-2"></i>Apply</button>
+                            <button class="btn btn-outline-light btn-sm" id="demo-flatten"><i class="fas fa-times-circle me-2"></i>Flatten Positions</button>
+                        </div>
+                        <div class="table-responsive mt-3">
+                            <table class="table table-dark table-striped mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>Side</th>
+                                        <th>Symbol</th>
+                                        <th>Qty</th>
+                                        <th>Entry</th>
+                                        <th>SL</th>
+                                        <th>TP</th>
+                                        <th>PnL</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="demo-positions"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div id="demo-alert" class="alert alert-warning mt-3" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -202,6 +332,105 @@
                     resultDiv.innerHTML = '<span class="text-danger">Analysis failed. API timeout or error.</span>';
                 });
         }
+    </script>
+    <script>
+        const fmt = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        let lastPrices = {};
+        function getState(){
+            try { const s = JSON.parse(localStorage.getItem('capax_demo')||'{}'); if(!s.balance && s.balance!==0){ s.balance = 10000; } if(!Array.isArray(s.positions)){ s.positions = []; } return s; } catch(e){ return { balance: 10000, positions: [] }; }
+        }
+        function setState(s){ localStorage.setItem('capax_demo', JSON.stringify(s)); }
+        function getUI(){ try { const u = JSON.parse(localStorage.getItem('capax_demo_ui')||'{}'); if(!u.presetSide){ u.presetSide = 'BUY'; } if(!u.mode){ u.mode = 'price'; } if(!u.symbol){ u.symbol = 'BTCUSDT'; } if(typeof u.trailingEnabled==='undefined'){ u.trailingEnabled = false; } if(typeof u.breakevenEnabled==='undefined'){ u.breakevenEnabled = false; } if(!u.trailing){ u.trailing = ''; } return u; } catch(e){ return { presetSide:'BUY', mode:'price', symbol:'BTCUSDT', trailingEnabled:false, breakevenEnabled:false, trailing:'' }; } }
+        function setUI(u){ const cur=getUI(); const next=Object.assign({}, cur, u||{}); localStorage.setItem('capax_demo_ui', JSON.stringify(next)); }
+        async function refreshAllPrices(){
+            try {
+                const s = getState();
+                const syms = new Set(s.positions.map(p => p.symbol));
+                const currentSym = document.getElementById('demo-symbol').value;
+                syms.add(currentSym);
+                await Promise.all(Array.from(syms).map(async sym => {
+                    const r = await fetch('/api/price?symbol=' + sym);
+                    const j = await r.json();
+                    if(j && typeof j.price !== 'undefined'){ lastPrices[sym] = j.price; }
+                }));
+                const price = lastPrices[currentSym] || 0;
+                document.getElementById('demo-price').textContent = fmt(price);
+                document.getElementById('demo-symbol-label').textContent = currentSym.replace('USDT','/USDT') + ' Price';
+                updatePositionsPnL();
+            } catch(e){}
+        }
+        function updateBalanceUI(){ const s = getState(); document.getElementById('demo-balance').textContent = fmt(s.balance); }
+        function updatePositionsPnL(){ const s = getState(); const tbody = document.getElementById('demo-positions');
+            const toClose = [];
+            s.positions.forEach((p, idx) => {
+                const price = lastPrices[p.symbol] || p.entry;
+                if(p.trailing){ if(p.side==='BUY'){ p.maxPrice = Math.max(p.maxPrice||p.entry, price); const dynSL = p.maxPrice * (1 - p.trailing/100); if(!p.sl || dynSL>p.sl){ p.sl = dynSL; } } else { p.minPrice = Math.min(p.minPrice||p.entry, price); const dynSLs = p.minPrice * (1 + p.trailing/100); if(!p.sl || dynSLs<p.sl){ p.sl = dynSLs; } } setState(s); }
+                if(p.breakeven && p.rdist && p.rdist>0){ const moved = p.side==='BUY' ? (price - p.entry) : (p.entry - price); if(moved >= p.rdist){ p.sl = p.entry; setState(s); } }
+                if(p.sl && p.sl>0){ if(p.side==='BUY' && price<=p.sl){ toClose.push({i:idx}); } if(p.side==='SELL' && price>=p.sl){ toClose.push({i:idx}); } }
+                if(p.tp && p.tp>0){ if(p.side==='BUY' && price>=p.tp){ toClose.push({i:idx}); } if(p.side==='SELL' && price<=p.tp){ toClose.push({i:idx}); } }
+            });
+            toClose.sort((a,b)=>b.i-a.i).forEach(c=>autoClosePosition(c.i));
+            const s2 = getState(); tbody.innerHTML = '';
+            s2.positions.forEach((p, idx) => { const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; const tr = document.createElement('tr'); const tdIdx=document.createElement('td'); tdIdx.textContent = (idx+1); const tdSide=document.createElement('td'); const badge=document.createElement('span'); badge.className = 'badge ' + (p.side==='BUY'?'bg-success':'bg-danger'); badge.textContent = p.side; tdSide.appendChild(badge); const tdSymbol=document.createElement('td'); tdSymbol.textContent = p.symbol.replace('USDT','/USDT'); const tdQty=document.createElement('td'); tdQty.textContent = p.qty.toFixed(6); const tdEntry=document.createElement('td'); tdEntry.textContent = fmt(p.entry); const tdSL=document.createElement('td'); tdSL.textContent = p.sl?fmt(p.sl):'-'; const tdTP=document.createElement('td'); tdTP.textContent = p.tp?fmt(p.tp):'-'; const tdPnl=document.createElement('td'); tdPnl.className = pnl>=0?'text-success':'text-danger'; tdPnl.textContent = fmt(pnl); const tdAct=document.createElement('td'); const btn=document.createElement('button'); btn.className = 'btn btn-outline-light btn-sm'; btn.textContent = 'Close'; btn.onclick = () => closePosition(idx); tdAct.appendChild(btn); tr.appendChild(tdIdx); tr.appendChild(tdSide); tr.appendChild(tdSymbol); tr.appendChild(tdQty); tr.appendChild(tdEntry); tr.appendChild(tdSL); tr.appendChild(tdTP); tr.appendChild(tdPnl); tr.appendChild(tdAct); tbody.appendChild(tr); }); }
+        async function applyTPPresetPrice(r){ const sym = document.getElementById('demo-symbol').value; const sl = parseFloat(document.getElementById('demo-sl').value||'0'); if(!sl || sl<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } let price = lastPrices[sym]; if(!price){ try { const rj = await fetch('/api/price?symbol=' + sym); const j = await rj.json(); price = j.price; } catch(e){} } if(!price || price<=0){ showAlert('Could not fetch price for preset calculation.'); return; } const sideSel = document.getElementById('preset-side').value; const diff = Math.abs(price - sl); let tp;
+            if(sideSel==='BUY'){ tp = price + (r * diff); } else { tp = price - (r * diff); }
+            document.getElementById('demo-tp').value = tp.toFixed(2);
+            document.getElementById('demo-mode').value = 'price'; updateModeVisibility(); }
+        async function applySLPreset(percent){ const mode = document.getElementById('demo-mode').value; const sym = document.getElementById('demo-symbol').value; if(mode==='percent'){ document.getElementById('demo-slp').value = percent; document.getElementById('demo-mode').value = 'percent'; updateModeVisibility(); return; } let price = lastPrices[sym]; if(!price){ try { const rj = await fetch('/api/price?symbol=' + sym); const j = await rj.json(); price = j.price; } catch(e){} } if(!price || price<=0){ showAlert('Could not fetch price for SL preset.'); return; } const sideSel = document.getElementById('preset-side').value; const sl = sideSel==='BUY' ? price * (1 - percent/100) : price * (1 + percent/100); document.getElementById('demo-sl').value = sl.toFixed(2); document.getElementById('demo-mode').value = 'price'; updateModeVisibility(); }
+        async function openPosition(side){ const amt = parseFloat(document.getElementById('demo-amount').value||'0'); if(!amt || amt<=0){ showAlert('Enter a valid amount.'); return; } const sym = document.getElementById('demo-symbol').value; let price = NaN; try { const r = await fetch('/api/price?symbol=' + sym); const j = await r.json(); price = j.price; } catch(e){} if(!price || price<=0){ showAlert('Price fetch failed. Try again.'); return; } const s = getState(); let qty = amt / price; if(side==='BUY'){ if(s.balance < amt){ showAlert('Insufficient balance.'); return; } s.balance -= amt; } else { clearAlert(); }
+            const mode = document.getElementById('demo-mode').value;
+            let sl, tp;
+            if(mode==='price'){
+                const slp = parseFloat(document.getElementById('demo-sl').value||'0');
+                const tpp = parseFloat(document.getElementById('demo-tp').value||'0');
+                sl = slp>0?slp:undefined; tp = tpp>0?tpp:undefined;
+            } else {
+                const slPct = parseFloat(document.getElementById('demo-slp').value||'0');
+                let tpPct = parseFloat(document.getElementById('demo-tpp').value||'0');
+                const ratioSel = document.getElementById('demo-tpreset').value;
+                if(tpPct<=0 && slPct>0 && ratioSel && ratioSel!=='none'){ tpPct = slPct * parseFloat(ratioSel); }
+                if(slPct>0){ sl = side==='BUY' ? price * (1 - slPct/100) : price * (1 + slPct/100); }
+                if(tpPct>0){ tp = side==='BUY' ? price * (1 + tpPct/100) : price * (1 - tpPct/100); }
+            }
+            const trailingEnabled = document.getElementById('demo-trailing-enabled').checked;
+            const trailing = parseFloat(document.getElementById('demo-trailing').value||'0');
+            const breakeven = document.getElementById('demo-breakeven-enabled').checked;
+            const pos = { side, qty, entry: price, symbol: sym, sl, tp };
+            if(trailingEnabled && trailing>0){ pos.trailing = trailing; if(side==='BUY'){ pos.maxPrice = price; } else { pos.minPrice = price; } }
+            if(breakeven && sl){ const rdist = Math.abs(price - sl); if(rdist>0){ pos.rdist = rdist; pos.breakeven = true; } }
+            s.positions.push(pos); setState(s); updateBalanceUI(); lastPrices[sym] = price; updatePositionsPnL(); }
+        function autoClosePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); setState(s); }
+        function closeAllPositions(){ const s = getState(); if(!s.positions.length){ return; } const prices = {}; s.positions.forEach(p=>{ prices[p.symbol] = lastPrices[p.symbol] || p.entry; }); for(let i=s.positions.length-1;i>=0;i--){ const p=s.positions[i]; const price = prices[p.symbol]; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); } setState(s); updateBalanceUI(); updatePositionsPnL(); }
+        function closePosition(i){ const s = getState(); const p = s.positions[i]; if(!p){ return; } const price = lastPrices[p.symbol] || p.entry; const pnl = p.side==='BUY' ? (price - p.entry) * p.qty : (p.entry - price) * p.qty; if(p.side==='BUY'){ s.balance += p.qty * price; } s.balance += pnl; s.positions.splice(i,1); setState(s); updateBalanceUI(); updatePositionsPnL(); }
+        function resetDemo(){ setState({ balance: 10000, positions: [] }); updateBalanceUI(); refreshAllPrices(); }
+        function applyStart(){ const val = parseFloat(document.getElementById('demo-start').value||'0'); if(val && val>0){ const s = getState(); s.balance = val; setState(s); updateBalanceUI(); } }
+        function updateModeVisibility(){ const mode = document.getElementById('demo-mode').value; const pw=document.getElementById('demo-sl').parentElement; const tw=document.getElementById('demo-tp').parentElement; const sp=document.getElementById('demo-slp-wrap'); const tpw=document.getElementById('demo-tpp-wrap'); const tpreset=document.getElementById('demo-tpreset-wrap'); if(mode==='percent'){ pw.style.display='none'; tw.style.display='none'; sp.style.display='block'; tpw.style.display='block'; tpreset.style.display='block'; } else { pw.style.display='block'; tw.style.display='block'; sp.style.display='none'; tpw.style.display='none'; tpreset.style.display='none'; } }
+        function updateModeBadge(){ const mode = document.getElementById('demo-mode').value; const badge = document.getElementById('demo-mode-badge'); if(badge){ badge.textContent = mode==='percent' ? 'Percent Mode' : 'Price Mode'; badge.className = mode==='percent' ? 'badge bg-warning text-dark' : 'badge bg-info text-dark'; } }
+        function showAlert(msg){ const el = document.getElementById('demo-alert'); if(!el) return; el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+        function clearAlert(){ showAlert(''); }
+        function updatePresetStates(){ const mode = document.getElementById('demo-mode').value; const slVal = parseFloat(document.getElementById('demo-sl').value||'0'); const tp1=document.getElementById('tp-1r'); const tp15=document.getElementById('tp-1_5r'); const tp2=document.getElementById('tp-2r'); const needSL = mode==='price'; const disabled = needSL && (!slVal || slVal<=0); [tp1,tp15,tp2].forEach(b=>{ if(b){ b.disabled = disabled; b.classList.toggle('disabled', disabled); } }); }
+        function initDemo(){ const ui=getUI(); document.getElementById('preset-side').value = ui.presetSide; document.getElementById('demo-mode').value = ui.mode; document.getElementById('demo-symbol').value = ui.symbol; document.getElementById('demo-trailing-enabled').checked = !!ui.trailingEnabled; document.getElementById('demo-breakeven-enabled').checked = !!ui.breakevenEnabled; if(ui.trailing!==''){ document.getElementById('demo-trailing').value = ui.trailing; }
+            updateModeVisibility(); updateModeBadge(); updateBalanceUI(); refreshAllPrices(); setInterval(refreshAllPrices, 10000);
+            document.getElementById('demo-buy').onclick = () => { document.getElementById('preset-side').value = 'BUY'; setUI({ presetSide:'BUY' }); clearAlert(); openPosition('BUY'); };
+            document.getElementById('demo-sell').onclick = () => { document.getElementById('preset-side').value = 'SELL'; setUI({ presetSide:'SELL' }); clearAlert(); openPosition('SELL'); };
+            document.getElementById('demo-reset').onclick = () => { resetDemo(); };
+            document.getElementById('demo-apply-start').onclick = applyStart;
+            document.getElementById('demo-symbol').onchange = () => { setUI({ symbol: document.getElementById('demo-symbol').value }); refreshAllPrices(); };
+            document.getElementById('demo-mode').onchange = () => { setUI({ mode: document.getElementById('demo-mode').value }); updateModeVisibility(); updateModeBadge(); updatePresetStates(); };
+            document.getElementById('demo-trailing-enabled').onchange = () => { setUI({ trailingEnabled: document.getElementById('demo-trailing-enabled').checked }); };
+            document.getElementById('demo-trailing').oninput = () => { setUI({ trailing: document.getElementById('demo-trailing').value }); };
+            document.getElementById('demo-breakeven-enabled').onchange = () => { setUI({ breakevenEnabled: document.getElementById('demo-breakeven-enabled').checked }); };
+            document.getElementById('demo-tpreset').onchange = async () => { const mode=document.getElementById('demo-mode').value; const val=document.getElementById('demo-tpreset').value; if(val==='none'){ return; } const r=parseFloat(val); if(mode==='percent'){ const slp=parseFloat(document.getElementById('demo-slp').value||'0'); if(!slp||slp<=0){ showAlert('Set a valid Stop Loss (%) to use TP presets.'); return; } document.getElementById('demo-tpp').value = (slp*r).toFixed(2); clearAlert(); } else { await applyTPPresetPrice(r); } };
+            ['demo-sl','demo-slp','demo-tp','demo-tpp'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.oninput = () => { clearAlert(); updatePresetStates(); }; }});
+            document.getElementById('tp-1r').onclick = async () => { const slp = parseFloat(document.getElementById('demo-sl').value||'0'); if(!slp || slp<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } await applyTPPresetPrice(1); };
+            document.getElementById('tp-1_5r').onclick = async () => { const slp = parseFloat(document.getElementById('demo-sl').value||'0'); if(!slp || slp<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } await applyTPPresetPrice(1.5); };
+            document.getElementById('tp-2r').onclick = async () => { const slp = parseFloat(document.getElementById('demo-sl').value||'0'); if(!slp || slp<=0){ showAlert('Set a valid Stop Loss price to use TP presets.'); return; } await applyTPPresetPrice(2); };
+            document.getElementById('sl-1p').onclick = () => { clearAlert(); applySLPreset(1); };
+            document.getElementById('sl-1_5p').onclick = () => { clearAlert(); applySLPreset(1.5); };
+            document.getElementById('sl-2p').onclick = () => { clearAlert(); applySLPreset(2); };
+            document.getElementById('demo-flatten').onclick = closeAllPositions;
+            updatePresetStates(); }
+        document.addEventListener('DOMContentLoaded', initDemo);
     </script>
 </body>
 </html>
