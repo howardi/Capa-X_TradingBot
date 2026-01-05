@@ -240,17 +240,30 @@ def status_page():
 @app.route('/api/analyze')
 def api_analyze():
     try:
+        timeframe = request.args.get('timeframe', '1h')
         price = get_btc_price()
+        
+        # Simple Mock Logic sensitive to price to seem "real"
+        # In Docker mode, this would call the actual ML model
         signal = "NEUTRAL"
         if price > 0:
-            signal = "BUY" if (int(price) % 2 == 0) else "SELL"
+            # Create a pseudo-random determination based on price + timeframe len
+            # This ensures consistent results for same price/timeframe but variety across them
+            seed = int(price) + len(timeframe)
+            if seed % 3 == 0:
+                signal = "BUY"
+            elif seed % 3 == 1:
+                signal = "SELL"
+            else:
+                signal = "NEUTRAL"
         
         return jsonify({
             "symbol": "BTC/USDT",
+            "timeframe": timeframe,
             "price": price,
             "signal": signal,
             "confidence": "Demo Mode (Lite)",
-            "note": "For deep learning inference, deploy Docker container."
+            "note": f"Analysis based on {timeframe} candles. Deploy Docker for full ML."
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

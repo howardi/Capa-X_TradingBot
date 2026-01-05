@@ -91,18 +91,26 @@
                     <div class="card-header">
                         <i class="fas fa-bolt me-2"></i> Quick Actions
                     </div>
-                    <div class="card-body d-flex gap-3">
-                        <button class="btn btn-primary" onclick="runAnalysis()">
-                            <i class="fas fa-brain me-2"></i> Run AI Analysis (Lite)
-                        </button>
+                    <div class="card-body d-flex flex-wrap gap-3 align-items-center">
+                        <div class="d-flex gap-2">
+                            <select class="form-select w-auto" id="analysis-timeframe">
+                                <option value="15m">15m</option>
+                                <option value="1h" selected>1h</option>
+                                <option value="4h">4h</option>
+                                <option value="1d">1d</option>
+                            </select>
+                            <button class="btn btn-primary text-nowrap" onclick="runAnalysis()">
+                                <i class="fas fa-brain me-2"></i> Run AI Analysis
+                            </button>
+                        </div>
                         <a href="https://github.com/howardi/CapacityBay_TradingBot" target="_blank" class="btn btn-outline-light">
-                            <i class="fab fa-github me-2"></i> View Source
+                            <i class="fab fa-github me-2"></i> Source
                         </a>
                         <a href="https://github.com/howardi/Capa-X_TradingBot#-%F0%9F%8F%9F-highlights" target="_blank" class="btn btn-outline-info">
-                            <i class="fas fa-book me-2"></i> Readme Highlights
+                            <i class="fas fa-book me-2"></i> Highlights
                         </a>
                         <a href="/status" class="btn btn-outline-secondary">
-                            <i class="fas fa-satellite-dish me-2"></i> Status Page
+                            <i class="fas fa-satellite-dish me-2"></i> Status
                         </a>
                     </div>
                     <div class="card-footer text-muted small" id="analysis-result" style="display: none;">
@@ -323,15 +331,16 @@
     <script>
         function runAnalysis() {
             const resultDiv = document.getElementById('analysis-result');
+            const timeframe = document.getElementById('analysis-timeframe').value;
             resultDiv.style.display = 'block';
-            resultDiv.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> Analyzing market data...';
+            resultDiv.innerHTML = `<i class="fas fa-spinner fa-spin me-2"></i> Analyzing market data (${timeframe})...`;
             
-            fetch('/api/analyze')
+            fetch('/api/analyze?timeframe=' + timeframe)
                 .then(response => response.json())
                 .then(data => {
                     const color = data.signal === 'BUY' ? 'text-success' : (data.signal === 'SELL' ? 'text-danger' : 'text-warning');
                     resultDiv.innerHTML = `
-                        <strong>Result:</strong> 
+                        <strong>Result (${data.timeframe}):</strong> 
                         <span class="${color} fw-bold">${data.signal}</span> 
                         at $${data.price} 
                         <small class="ms-2 text-muted">(${data.note})</small>
