@@ -281,6 +281,52 @@ def api_price():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/candles')
+def api_candles():
+    try:
+        symbol = request.args.get('symbol', 'BTCUSDT').upper()
+        timeframe = request.args.get('timeframe', '1h')
+        limit = request.args.get('limit', '100')
+        
+        # Map timeframe to Binance interval
+        # 30s is not standard, fallback to 1m
+        interval_map = {
+            '30s': '1m', '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
+            '1h': '1h', '4h': '4h', '1d': '1d'
+        }
+        interval = interval_map.get(timeframe, '1h')
+        
+        # Fetch from Binance
+        url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+        
+        # Try Binance.US if .com fails (simple fallback)
+        try:
+            r = requests.get(url, timeout=3)
+            r.raise_for_status()
+            data = r.json()
+        except:
+            url = f'https://api.binance.us/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
+            r = requests.get(url, timeout=3)
+            r.raise_for_status()
+            data = r.json()
+
+        # Format for Lightweight Charts: { time: 1234567890, open: 1, high: 2, low: 0.5, close: 1.5 }
+        candles = []
+        for d in data:
+            # Binance time is ms, Lightweight Charts expects seconds for UNIX timestamp
+            candles.append({
+                'time': int(d[0] / 1000), 
+                'open': float(d[1]),
+                'high': float(d[2]),
+                'low': float(d[3]),
+                'close': float(d[4])
+            })
+            
+        return jsonify(candles)
+    except Exception as e:
+        # Fallback empty response rather than 500 to avoid breaking UI
+        return jsonify([])
+
 @app.route('/api/exchange-health')
 def api_exchange_health():
     try:
