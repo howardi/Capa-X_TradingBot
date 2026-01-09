@@ -67,7 +67,12 @@ $ENV_VARS = "PYTHONUNBUFFERED=1," + `
             "FLUTTERWAVE_PUBLIC_KEY=FLWPUBK-aded1251ab1fccfd69b058608f38f7a8-X," + `
             "FLUTTERWAVE_SECRET_KEY=FLWSECK-2d9e29e2c7e85214e55fa642cff59b99-19b9abc3310vt-X," + `
             "FLUTTERWAVE_ENCRYPTION_KEY=2d9e29e2c7e8eaa49db18d1b," + `
-            "TRADING_MODE=Demo"
+            "TRADING_MODE=CEX_Direct," + `
+            "DEFAULT_EXCHANGE=bybit," + `
+            "BINANCE_API_KEY=y5C7zUoieJ4nyOS6HRzTm4KWjSNyxWgDfFd38c2MwspW4GF3FqEhEMlEYUD9rICl," + `
+            "BINANCE_SECRET=hYOJtUqawLp89CgVoywKN6yGUrvJtJANn4zSns5vlY2PdETUV5EWnwnyuT8hGWbn," + `
+            "BYBIT_API_KEY=jzVVX4fUBWMzfJgDvJ," + `
+            "BYBIT_SECRET=et0qHWE2KaSggw6qXylmhwpnUHiITzj4ylHh"
 
 gcloud run deploy $SERVICE_NAME `
   --image gcr.io/$PROJECT_ID/$SERVICE_NAME `
