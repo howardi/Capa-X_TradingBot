@@ -237,20 +237,109 @@ class FiatManager:
     # Alias
     withdraw_ngn = initiate_withdrawal
 
+    def resolve_account(self, account_number, bank_code):
+        if not self.adapter: return {"status": "error"}
+        return self.adapter.resolve_account(account_number, bank_code)
+
     def get_banks(self):
-        if self.adapter:
-            return self.adapter.get_banks()
-        return []
+        if not self.adapter: return []
+        return self.adapter.get_banks()
 
     def get_balances(self):
-        if self.adapter:
-            return self.adapter.get_balances()
-        return []
+        if not self.adapter: return []
+        return self.adapter.get_balances()
 
-    def resolve_account(self, account_number, bank_code):
-        if self.adapter:
-            return self.adapter.resolve_account_number(account_number, bank_code)
-        return {"status": "error", "message": "Adapter not ready"}
+    # --- SWAP LOGIC (BRIDGE) ---
+
+    def convert_ngn_to_usdt(self, amount_ngn: float) -> Dict:
+        """
+        Convert NGN from Internal Ledger to USDT (Internal Ledger).
+        This creates 'Tradeable Capital' for the Live Bot.
+        """
+        if self.fiat_balance < amount_ngn:
+            return {"status": "error", "message": "Insufficient NGN Balance"}
+        
+        # 1. Get Quote
+        quote = self.swap_manager.get_quote("NGN", "USDT", amount_ngn)
+        if quote['status'] != 'success':
+            return quote
+            
+        amount_usdt = quote['amount_out_net']
+        
+        # 2. Update Internal Ledgers
+        self.fiat_balance -= amount_ngn
+        
+        # Get current USDT balance
+        current_usdt = 0.0
+        if hasattr(self.bot, 'storage'):
+            try:
+                current_usdt = float(self.bot.storage.get_setting("usdt_balance", 0.0))
+            except:
+                current_usdt = 0.0
+                
+        new_usdt = current_usdt + amount_usdt
+        
+        # 3. Persist
+        if hasattr(self.bot, 'storage'):
+            self.bot.storage.save_setting("fiat_balance_ngn", self.fiat_balance)
+            self.bot.storage.save_setting("usdt_balance", new_usdt)
+            
+            # Record Transaction
+            self.bot.storage.save_fiat_transaction(
+                f"swap_n_u_{int(time.time())}", 'swap_ngn_usdt', amount_ngn, 'NGN', 'success',
+                details={"rate": quote['rate'], "usdt_received": amount_usdt}
+            )
+            
+        return {
+            "status": "success", 
+            "message": f"Swapped ₦{amount_ngn:,.2f} to {amount_usdt:.2f} USDT",
+            "usdt_balance": new_usdt,
+            "ngn_balance": self.fiat_balance
+        }
+
+    def convert_usdt_to_ngn(self, amount_usdt: float) -> Dict:
+        """
+        Convert USDT (Internal Ledger) back to NGN.
+        """
+        # Get current USDT balance
+        current_usdt = 0.0
+        if hasattr(self.bot, 'storage'):
+            try:
+                current_usdt = float(self.bot.storage.get_setting("usdt_balance", 0.0))
+            except:
+                current_usdt = 0.0
+                
+        if current_usdt < amount_usdt:
+            return {"status": "error", "message": "Insufficient USDT Balance"}
+            
+        # 1. Get Quote
+        quote = self.swap_manager.get_quote("USDT", "NGN", amount_usdt)
+        if quote['status'] != 'success':
+            return quote
+            
+        amount_ngn = quote['amount_out_net']
+        
+        # 2. Update Internal Ledgers
+        new_usdt = current_usdt - amount_usdt
+        self.fiat_balance += amount_ngn
+        
+        # 3. Persist
+        if hasattr(self.bot, 'storage'):
+            self.bot.storage.save_setting("fiat_balance_ngn", self.fiat_balance)
+            self.bot.storage.save_setting("usdt_balance", new_usdt)
+            
+            # Record Transaction
+            self.bot.storage.save_fiat_transaction(
+                f"swap_u_n_{int(time.time())}", 'swap_usdt_ngn', amount_usdt, 'USDT', 'success',
+                details={"rate": quote['rate'], "ngn_received": amount_ngn}
+            )
+            
+        return {
+            "status": "success", 
+            "message": f"Swapped {amount_usdt:.2f} USDT to ₦{amount_ngn:,.2f}",
+            "usdt_balance": new_usdt,
+            "ngn_balance": self.fiat_balance
+        }
 
     def execute_swap(self, from_asset: str, to_asset: str, amount: float) -> Dict:
         """

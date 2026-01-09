@@ -133,21 +133,85 @@ class ExecutionEngine:
         elif mode in ['CEX_Proxy', 'CEX_Direct']:
             try:
                 result = None
-                if strategy in ["market", "manual_close"]:
-                    result = self.bot.data_manager.create_order(symbol, 'market', side, amount)
                 
-                elif strategy == "limit":
-                    if price is None:
-                        ticker = self.bot.data_manager.fetch_ticker(symbol)
-                        if not ticker:
-                            return None
-                        price = ticker['bid'] if side == 'buy' else ticker['ask']
-                    result = self.bot.data_manager.create_order(symbol, 'limit', side, amount, price)
+                # --- SYNTHETIC LIVE FALLBACK CHECK ---
+                # Check if we should use Synthetic Execution (Ledger-backed)
+                use_synthetic = False
                 
-                elif strategy == "iceberg":
-                    # Simple iceberg implementation for live (executes first chunk)
-                    visible_amount = amount * 0.1
-                    result = self.bot.data_manager.create_order(symbol, 'limit', side, visible_amount)
+                # If Exchange Balance is 0 but Ledger Balance > 0
+                if hasattr(self.bot, 'storage'):
+                    try:
+                         # Get Real Exchange Balance
+                         exchange_bal = 0.0
+                         if hasattr(self.bot, 'wallet_balances'):
+                             # Assuming USDT
+                             usdt_asset = next((x for x in self.bot.wallet_balances if x['asset'] == 'USDT'), None)
+                             if usdt_asset:
+                                 exchange_bal = float(usdt_asset.get('free', 0.0))
+                                 
+                         # Get Ledger Balance
+                         ledger_bal = float(self.bot.storage.get_setting("usdt_balance", 0.0))
+                         
+                         if exchange_bal < 1.0 and ledger_bal > 10.0:
+                             print(f"⚠️ Exchange Balance Low ({exchange_bal}). Using Ledger Balance ({ledger_bal}) for Synthetic Execution.")
+                             use_synthetic = True
+                    except:
+                        pass
+
+                if use_synthetic:
+                    # Execute Synthetically (Paper Trade on Live Data)
+                    print(f"🔄 Executing Synthetic Live Order: {side} {amount} {symbol}")
+                    
+                    # 1. Simulate Order
+                    ticker = self.bot.data_manager.fetch_ticker(symbol)
+                    current_price = ticker['bid'] if side == 'buy' else ticker['ask'] if ticker else 0
+                    
+                    if current_price > 0:
+                        result = {
+                            'id': f'syn_{int(time.time())}', 
+                            'status': 'closed',  # Mark as closed immediately or track?
+                            # For CEX, we usually return a 'closed' order if it filled immediately.
+                            # But wait, we need to track the position.
+                            'price': current_price, 
+                            'amount': amount, 
+                            'side': side,
+                            'synthetic': True,
+                            'filled': amount,
+                            'remaining': 0.0
+                        }
+                        
+                        # 2. Update Ledger PnL / Cost
+                        cost = amount * current_price
+                        if hasattr(self.bot, 'storage'):
+                            current_usdt = float(self.bot.storage.get_setting("usdt_balance", 0.0))
+                            if side == 'buy':
+                                new_bal = current_usdt - cost # Deduct cost (Buy)
+                            else: # Sell
+                                new_bal = current_usdt + cost # Add proceeds (Sell)
+                            
+                            self.bot.storage.save_setting("usdt_balance", new_bal)
+                            print(f"💰 Synthetic Ledger Updated: {new_bal:.2f} USDT")
+
+                    else:
+                        raise Exception("Failed to fetch live price for synthetic execution")
+
+                else:
+                    # --- REAL EXECUTION ---
+                    if strategy in ["market", "manual_close"]:
+                        result = self.bot.data_manager.create_order(symbol, 'market', side, amount)
+                    
+                    elif strategy == "limit":
+                        if price is None:
+                            ticker = self.bot.data_manager.fetch_ticker(symbol)
+                            if not ticker:
+                                return None
+                            price = ticker['bid'] if side == 'buy' else ticker['ask']
+                        result = self.bot.data_manager.create_order(symbol, 'limit', side, amount, price)
+                    
+                    elif strategy == "iceberg":
+                        # Simple iceberg implementation for live (executes first chunk)
+                        visible_amount = amount * 0.1
+                        result = self.bot.data_manager.create_order(symbol, 'limit', side, visible_amount)
                 
                 # Attach SL/TP if successful
                 if result:
