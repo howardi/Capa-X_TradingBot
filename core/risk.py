@@ -1,15 +1,17 @@
 
 import numpy as np
+import time
 from config.trading_config import TRADING_CONFIG
 
 class AdaptiveRiskManager:
-    def __init__(self, initial_capital=1000.0):
-        self.demo_balance = initial_capital
+    def __init__(self, initial_capital=0.0, storage_manager=None):
+        self.storage = storage_manager
+        self.demo_balance = 0.0
         self.live_balance = 0.0
-        self.mode = 'Demo' # 'Demo', 'CEX_Proxy', 'CEX_Direct', 'DEX'
+        self.mode = 'Live' # 'Demo', 'CEX_Proxy', 'CEX_Direct', 'DEX'
 
         self.metrics = {
-            'Demo': {'max_drawdown': 0.0, 'win_streak': 0, 'loss_streak': 0, 'peak': initial_capital},
+            'Demo': {'max_drawdown': 0.0, 'win_streak': 0, 'loss_streak': 0, 'peak': 0.0},
             'CEX_Proxy': {'max_drawdown': 0.0, 'win_streak': 0, 'loss_streak': 0, 'peak': 0.0},
             'CEX_Direct': {'max_drawdown': 0.0, 'win_streak': 0, 'loss_streak': 0, 'peak': 0.0},
             'DEX': {'max_drawdown': 0.0, 'win_streak': 0, 'loss_streak': 0, 'peak': 0.0}
@@ -25,6 +27,7 @@ class AdaptiveRiskManager:
         self.is_kill_switch_active = False
         self.max_dd = TRADING_CONFIG['risk']['kill_switch_drawdown'] # From config
         self.dd_triggered = False
+        self.last_log_time = 0
 
     @property
     def current_capital(self):
@@ -61,6 +64,13 @@ class AdaptiveRiskManager:
         if self.mode in self.metrics:
             if balance > self.metrics[self.mode]['peak']:
                  self.metrics[self.mode]['peak'] = balance
+        
+        # Log to Storage if available
+        # Optimization: Rate limit DB writes to 60s
+        if self.storage:
+            if time.time() - self.last_log_time > 60:
+                self.storage.log_balance(self.live_balance, self.live_balance)
+                self.last_log_time = time.time()
 
     def check_kill_switch(self):
         """
@@ -105,11 +115,26 @@ class AdaptiveRiskManager:
         if tp_atr_mult is not None:
             self.take_profit_config = {'mode': 'atr', 'value': float(tp_atr_mult)}
 
+    def deduct_capital(self, amount):
+        """Deduct capital when entering a trade (Manual Ledger Update)"""
+        if self.mode == 'Demo':
+            self.demo_balance -= amount
+        else:
+            self.live_balance -= amount
+            
+    def credit_capital(self, amount):
+        """Credit capital when exiting a trade (Manual Ledger Update)"""
+        if self.mode == 'Demo':
+            self.demo_balance += amount
+        else:
+            self.live_balance += amount
+
     def update_metrics(self, current_balance=None, last_trade_result=None, pnl_amount=0.0, capital_released=0.0):
         """Update metrics for the active mode with PnL amount"""
         if pnl_amount != 0.0 or capital_released != 0.0:
             if self.mode != 'Demo':
-                self.live_balance += pnl_amount # Live balance is usually synced, but this helps simulations
+                # User Request: Add profit/principal logic to Live mode too (Manual Ledger)
+                self.live_balance += (pnl_amount + capital_released)
                 current_balance = self.live_balance
             else:
                 self.demo_balance += (pnl_amount + capital_released)
@@ -255,6 +280,47 @@ class AdaptiveRiskManager:
             tp = entry_price - (atr * multiplier_tp)
             
         return {'stop_loss': sl, 'take_profit': tp}
+
+    def update_trailing_stop(self, entry_price, current_price, current_stop_loss, side, atr):
+        """
+        Move Stop Loss to secure profits (Trailing Stop).
+        Logic:
+        1. If profit > 1.5 * ATR (Risk), move SL to Break Even.
+        2. If profit > 3 * ATR, trail by 1.5 * ATR.
+        """
+        if self.stop_loss_config.get('mode') != 'atr':
+            return current_stop_loss # Only support ATR trailing for now
+            
+        new_sl = current_stop_loss
+        profit_dist = 0
+        
+        if side.lower() == 'buy':
+            profit_dist = current_price - entry_price
+            
+            # Break Even Trigger
+            if profit_dist > (1.5 * atr) and current_stop_loss < entry_price:
+                new_sl = entry_price * 1.001 # Slightly above entry to cover fees
+                
+            # Trailing Logic
+            if profit_dist > (3.0 * atr):
+                trail_level = current_price - (1.5 * atr)
+                if trail_level > new_sl:
+                    new_sl = trail_level
+                    
+        elif side.lower() == 'sell':
+            profit_dist = entry_price - current_price
+            
+            # Break Even Trigger
+            if profit_dist > (1.5 * atr) and current_stop_loss > entry_price:
+                new_sl = entry_price * 0.999
+                
+            # Trailing Logic
+            if profit_dist > (3.0 * atr):
+                trail_level = current_price + (1.5 * atr)
+                if trail_level < new_sl:
+                    new_sl = trail_level
+                    
+        return new_sl
 
 class MonteCarloSimulator:
     """

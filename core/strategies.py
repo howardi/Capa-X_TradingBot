@@ -127,7 +127,74 @@ class GridTradingStrategy(Strategy):
         self.name = "Grid Trading"
 
     def execute(self, symbol, data=None):
-        # Simple placeholder for grid logic or rely on bot to handle grid orders
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=100)
+        if df.empty: return None
+        
+        # Calculate Grid Levels (using Bollinger Bands as dynamic grid for simplicity)
+        if 'bb_lower' not in df.columns:
+            df = self.bot.analyzer.calculate_indicators(df)
+            
+        row = df.iloc[-1]
+        price = row['close']
+        
+        # Grid Logic: Buy at lower bands, Sell at upper bands
+        # A real grid bot would place multiple limit orders. 
+        # Here we signal entry when price crosses grid levels.
+        
+        lower_band = row['bb_lower']
+        upper_band = row['bb_upper']
+        mid_band = row['ema_20'] if 'ema_20' in row else (lower_band + upper_band) / 2
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Buy Zone (Lower Grid)
+        if price <= lower_band * 1.005: # Within 0.5% of lower band
+            signal_type = 'buy'
+            reason = "Grid Buy Level Reached"
+            confidence = 0.8
+            
+        # Sell Zone (Upper Grid)
+        elif price >= upper_band * 0.995: # Within 0.5% of upper band
+            signal_type = 'sell'
+            reason = "Grid Sell Level Reached"
+            confidence = 0.8
+            
+        if signal_type != 'hold':
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Ranging',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": price,
+                "stop_loss": lower_band * 0.98 if signal_type == 'buy' else upper_band * 1.02,
+                "take_profit": mid_band, # Target mean reversion
+                "risk_percent": 1.0,
+                "execution_score": 1.0
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df)
+
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=price,
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'bb_lower': lower_band, 'bb_upper': upper_band},
+                score=8.0,
+                regime='Ranging',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
         return None
 
 class MeanReversionStrategy(Strategy):
@@ -370,6 +437,164 @@ class FundingArbitrageStrategy(Strategy):
                 decision_details=decision_packet
             )
         return None
+
+class SpatialArbitrageStrategy(Strategy):
+    """
+    Spatial Arbitrage Strategy.
+    Scans multiple exchanges for price differences on the same asset.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Spatial Arbitrage"
+
+    def execute(self, symbol, data=None):
+        # Use the core ArbitrageScanner
+        # Note: This strategy might need to ignore the 'symbol' passed if it scans globally,
+        # but for compatibility, we scan the requested symbol.
+        
+        opps = self.bot.arbitrage.scan_opportunities(symbol)
+        
+        if not opps:
+            return None
+            
+        # Get best opportunity
+        best_opp = opps[0] # scan_opportunities already ranks/sorts or we pick first
+        
+        # Check profitability threshold (already filtered in scan_opportunities usually, but double check)
+        if best_opp['estimated_profit_1k'] < 1.0: # Minimum $1 profit per $1k
+            return None
+            
+        # For Spatial Arbitrage, we typically need to execute on TWO exchanges.
+        # The Signal object structure is designed for a single direction on the 'active' exchange.
+        # This is a limitation. However, we can signal a "Buy" on the lower priced exchange
+        # if that is the one the bot is currently connected to.
+        
+        # Check which exchange we are connected to
+        current_ex = self.bot.exchange_id.lower() if self.bot.exchange_id else ''
+        
+        signal_type = 'hold'
+        reason = ""
+        
+        # Ensure exchange names are compared case-insensitively
+        buy_ex = best_opp['buy_exchange'].lower()
+        sell_ex = best_opp['sell_exchange'].lower()
+        
+        if current_ex == buy_ex:
+            signal_type = 'buy'
+            reason = f"Arb Buy (Sell on {best_opp['sell_exchange']} @ {best_opp['sell_price']})"
+        elif current_ex == sell_ex:
+            signal_type = 'sell'
+            reason = f"Arb Sell (Buy on {best_opp['buy_exchange']} @ {best_opp['buy_price']})"
+        else:
+            # We are not connected to either leg of the arbitrage
+            # We can't execute automatically unless we can switch exchanges dynamically.
+            # For now, we return None or Log it.
+            return None
+            
+        decision_packet = {
+            'decision': 'EXECUTE',
+            'confidence': 0.95,
+            'market_regime': 'Arbitrage',
+            'rejection_reason': '',
+            "symbol": symbol,
+            "bias": signal_type.upper(),
+            "strategy": self.name,
+            "entry": best_opp['buy_price'] if signal_type == 'buy' else best_opp['sell_price'],
+            "stop_loss": 0, 
+            "take_profit": 0,
+            "risk_percent": 10.0, # High confidence
+            "execution_score": 1.0,
+            "arbitrage_details": best_opp
+        }
+        
+        # Skip standard risk management for Arb? Or use it?
+        # Use it for sizing, but stops might be tight.
+        decision_packet = self.apply_risk_management(decision_packet, df=None)
+        
+        self.bot.log_trade(decision_packet)
+        
+        return Signal(
+            symbol=symbol,
+            type=signal_type,
+            price=decision_packet['entry'],
+            timestamp=pd.Timestamp.now(),
+            reason=reason,
+            indicators={'spread_pct': best_opp['spread_pct']},
+            score=9.5,
+            regime='Arbitrage',
+            liquidity_status='Normal',
+            confidence=0.95,
+            decision_details=decision_packet
+        )
+
+class EnsembleStrategy(Strategy):
+    """
+    Ensemble Brain Strategy.
+    Combines Technicals, ML Prediction, Sentiment, and RL using the CapacityBayBrain.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Ensemble Brain"
+
+    def execute(self, symbol, data=None):
+        df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=200)
+        if df.empty: return None
+        
+        # 1. Technical Analysis Signal
+        df = self.bot.analyzer.calculate_indicators(df)
+        tech_signal = self.bot.analyzer.get_signal(df)
+        
+        # 2. Sentiment (Mock or Real)
+        # self.bot.sentiment.get_sentiment(symbol)
+        sentiment_score = 0.0 
+        
+        # 3. Get Ensemble Decision from Brain
+        ensemble_result = self.bot.brain.get_ensemble_signal(df, tech_signal, sentiment_score)
+        
+        # 4. Gating
+        decision = ensemble_result['decision'] # BUY, SELL, HOLD
+        
+        if decision in ['BUY', 'SELL']:
+            signal_type = decision.lower()
+            confidence = ensemble_result['confidence']
+            
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Ensemble',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": df['close'].iloc[-1],
+                "stop_loss": 0,
+                "take_profit": 0,
+                "risk_percent": 2.0 * confidence, # Scale size by confidence
+                "execution_score": confidence,
+                "components": ensemble_result['components']
+            }
+            
+            # Apply Risk Management
+            decision_packet = self.apply_risk_management(decision_packet, df)
+            
+            self.bot.log_trade(decision_packet)
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=df['close'].iloc[-1],
+                timestamp=pd.Timestamp.now(),
+                reason=f"Ensemble Score: {ensemble_result['final_score']:.2f}",
+                indicators=ensemble_result['components'],
+                score=ensemble_result['final_score'] * 10,
+                regime='Ensemble',
+                liquidity_status='Normal',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+            
+        return None
+
 
 class BasisTradeStrategy(Strategy):
     """
@@ -799,6 +1024,92 @@ class SniperStrategy(Strategy):
                 score=9.5, # Highest Score
                 regime='Trending',
                 liquidity_status='High',
+                confidence=confidence,
+                decision_details=decision_packet
+            )
+            
+        return None
+
+class NigerianMarketStrategy(Strategy):
+    """
+    Nigerian Market Strategy (NGN/USDT).
+    Focuses on Inflation Hedging and Arbitrage opportunities.
+    Monitors NGN rates and signals crypto accumulation during NGN devaluation.
+    """
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.name = "Nigerian Market Strategy"
+        # If possible, get rate from FiatManager
+        self.last_rate = 0.0
+
+    def execute(self, symbol, data=None):
+        # 1. Fetch NGN Rate (Oracle)
+        current_rate = 0.0
+        if hasattr(self.bot, 'fiat') and self.bot.fiat.adapter:
+            try:
+                # Attempt to get real rate if not cached recently
+                # For strategy execution speed, we might rely on cached values in bot
+                pass 
+            except:
+                pass
+        
+        # 2. Standard Crypto Analysis (Trend Following)
+        # In high inflation (NGN), we want to be Long Crypto/USDT most of the time.
+        
+        if data is None:
+             df = self.bot.data_manager.fetch_ohlcv(symbol, self.bot.timeframe, limit=50)
+        else:
+             df = data
+
+        if df.empty: return None
+        
+        row = df.iloc[-1]
+        
+        # Simple Logic: 
+        # Buy on Dips if Trend is Up (EMA 50 > EMA 200)
+        # Hold longer than usual (Swing Trade) to ride devaluation
+        
+        ema_50 = row['close'] # Placeholder if not computed
+        if 'ema_50' in row: ema_50 = row['ema_50']
+        
+        signal_type = 'hold'
+        reason = ""
+        confidence = 0.0
+        
+        # Check RSI for oversold (Dip)
+        rsi = row.get('rsi', 50)
+        
+        if rsi < 40:
+            signal_type = 'buy'
+            reason = "Inflation Hedge: Buy the Dip"
+            confidence = 0.85
+            
+        if signal_type != 'hold':
+            decision_packet = {
+                'decision': 'EXECUTE',
+                'confidence': confidence,
+                'market_regime': 'Inflationary',
+                'rejection_reason': '',
+                "symbol": symbol,
+                "bias": signal_type.upper(),
+                "strategy": self.name,
+                "entry": row['close'],
+                "stop_loss": row['close'] * 0.95, # Wide stop
+                "take_profit": row['close'] * 1.10, # Target 10%
+                "risk_percent": 2.0,
+                "execution_score": 1.0
+            }
+            
+            return Signal(
+                symbol=symbol,
+                type=signal_type,
+                price=row['close'],
+                timestamp=pd.Timestamp.now(),
+                reason=reason,
+                indicators={'rsi': rsi},
+                score=8.5,
+                regime='Inflationary',
+                liquidity_status='Normal',
                 confidence=confidence,
                 decision_details=decision_packet
             )

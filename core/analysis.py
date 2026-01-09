@@ -85,7 +85,11 @@ class TechnicalAnalysis:
 
         # Momentum Indicators
         # RSI
-        df['rsi'] = df.ta.rsi(length=RSI_PERIOD)
+        rsi = df.ta.rsi(length=RSI_PERIOD)
+        if isinstance(rsi, pd.DataFrame):
+            df['rsi'] = rsi.iloc[:, 0]
+        else:
+            df['rsi'] = rsi
         
         # Stochastic RSI
         stoch_rsi = df.ta.stochrsi(length=14, rsi_length=14, k=3, d=3)
@@ -94,7 +98,11 @@ class TechnicalAnalysis:
 
         # Volume Indicators
         # OBV (On Balance Volume)
-        df['obv'] = df.ta.obv()
+        obv = df.ta.obv()
+        if isinstance(obv, pd.DataFrame):
+            df['obv'] = obv.iloc[:, 0]
+        else:
+            df['obv'] = obv
 
         # Volatility Indicators
         # Bollinger Bands
@@ -106,17 +114,29 @@ class TechnicalAnalysis:
             # We need to find the specific column names dynamically or assume standard pandas_ta naming
             cols = df.columns
             try:
-                bbb = [c for c in cols if c.startswith('BBB')][0] # Bollinger Band Width
-                df['bb_width'] = df[bbb]
-            except IndexError:
-                # Fallback calculation if BBB not returned
-                bbu = [c for c in cols if c.startswith('BBU')][0]
-                bbl = [c for c in cols if c.startswith('BBL')][0]
-                bbm = [c for c in cols if c.startswith('BBM')][0]
-                df['bb_width'] = (df[bbu] - df[bbl]) / df[bbm] * 100
+                bbb_cols = [c for c in cols if c.startswith('BBB')]
+                if bbb_cols:
+                    df['bb_width'] = df[bbb_cols[0]]
+                else:
+                    # Fallback calculation if BBB not returned
+                    bbu_cols = [c for c in cols if c.startswith('BBU')]
+                    bbl_cols = [c for c in cols if c.startswith('BBL')]
+                    bbm_cols = [c for c in cols if c.startswith('BBM')]
+                    
+                    if bbu_cols and bbl_cols and bbm_cols:
+                        bbu = bbu_cols[0]
+                        bbl = bbl_cols[0]
+                        bbm = bbm_cols[0]
+                        df['bb_width'] = (df[bbu] - df[bbl]) / df[bbm] * 100
+            except Exception:
+                pass
 
         # ATR (Average True Range)
-        df['atr'] = df.ta.atr(length=14)
+        atr = df.ta.atr(length=14)
+        if isinstance(atr, pd.DataFrame):
+            df['atr'] = atr.iloc[:, 0]
+        else:
+            df['atr'] = atr
 
         # SuperTrend (Trend Signal)
         try:
@@ -126,10 +146,13 @@ class TechnicalAnalysis:
                 # Normalize columns
                 # SUPERT_10_3.0 (Trend Line), SUPERTd_10_3.0 (Direction: 1/-1)
                 cols = df.columns
-                st_line = [c for c in cols if c.startswith('SUPERT_')][0]
-                st_dir = [c for c in cols if c.startswith('SUPERTd_')][0]
-                df['supertrend'] = df[st_line]
-                df['supertrend_dir'] = df[st_dir]
+                st_lines = [c for c in cols if c.startswith('SUPERT_')]
+                st_dirs = [c for c in cols if c.startswith('SUPERTd_')]
+                
+                if st_lines:
+                    df['supertrend'] = df[st_lines[0]]
+                if st_dirs:
+                    df['supertrend_dir'] = df[st_dirs[0]]
         except Exception:
             pass
 
@@ -174,7 +197,12 @@ class TechnicalAnalysis:
             # CMF (Chaikin Money Flow)
             cmf = df.ta.cmf()
             if cmf is not None:
-                df = pd.concat([df, cmf], axis=1)
+                if isinstance(cmf, pd.DataFrame):
+                     df = pd.concat([df, cmf], axis=1)
+                else:
+                     # If Series, assign directly
+                     df['cmf'] = cmf
+                     
                 # Rename if necessary, pandas_ta usually returns 'CMF_20'
                 cols = df.columns
                 cmf_col = [c for c in cols if c.startswith('CMF')]
@@ -183,7 +211,11 @@ class TechnicalAnalysis:
 
             # MFI
             if 'volume' in df.columns:
-                df['mfi'] = df.ta.mfi(length=14)
+                mfi = df.ta.mfi(length=14)
+                if isinstance(mfi, pd.DataFrame):
+                    df['mfi'] = mfi.iloc[:, 0]
+                else:
+                    df['mfi'] = mfi
                 
             # PSAR
             psar = df.ta.psar()

@@ -14,7 +14,7 @@ def _custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     # Actually, the timeout for failure might be long, so parallel or force is better.
     # Given the user's issue, forcing it for binance is safer for now.
     
-    if host == 'api.binance.com':
+    if host in ['api.binance.com', 'fapi.binance.com', 'dapi.binance.com']:
         try:
             # logger.info(f"Attempting to resolve {host} using Google DNS (8.8.8.8)...")
             resolver = dns.resolver.Resolver()

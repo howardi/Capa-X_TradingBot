@@ -160,12 +160,42 @@ class TOTP:
                 return True
         return False
 
+from core.security import SecurityManager
+from core.persistence import CloudPersistence
+
+# Import Firestore
+try:
+    from google.cloud import firestore
+    FIRESTORE_AVAILABLE = True
+except ImportError:
+    FIRESTORE_AVAILABLE = False
+    print("[Auth] Firestore client library not found.")
+
 class AuthManager:
     def __init__(self, data_dir="data/users"):
         self.data_dir = data_dir
         self.users_file = os.path.join(self.data_dir, "users_db.json")
+        self.security = SecurityManager() # Initialize Security Manager
+        
+        # Firestore Setup
+        self.db_firestore = None
+        if FIRESTORE_AVAILABLE:
+            try:
+                # Check if we are in Google Cloud environment or have creds
+                if os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("K_SERVICE"):
+                    self.db_firestore = firestore.Client()
+                    print("[Auth] Firestore Connected.")
+            except Exception as e:
+                print(f"[Auth] Firestore Connection Failed: {e}")
+
+        # Initialize Cloud Persistence
+        self.cloud_storage = CloudPersistence()
+        # Try to download latest users DB from cloud BEFORE loading
+        self.cloud_storage.download_file("users_db.json", self.users_file)
+        
         self._ensure_dir()
         self._load_users()
+        self.seed_users()
 
     def _ensure_dir(self):
         if not os.path.exists(self.data_dir):
@@ -175,6 +205,24 @@ class AuthManager:
                 json.dump({}, f)
 
     def _load_users(self):
+        # 1. Try to load from Firestore (Source of Truth)
+        if self.db_firestore:
+            try:
+                users_ref = self.db_firestore.collection('users')
+                docs = users_ref.stream()
+                
+                count = 0
+                for doc in docs:
+                    self.users[doc.id] = doc.to_dict()
+                    count += 1
+                
+                if count > 0:
+                    print(f"[Auth] Loaded {count} users from Firestore.")
+                    return
+            except Exception as e:
+                print(f"[Auth] Firestore Load Error: {e}")
+
+        # 2. Fallback to Local File
         try:
             with open(self.users_file, 'r') as f:
                 self.users = json.load(f)
@@ -182,8 +230,63 @@ class AuthManager:
             self.users = {}
 
     def _save_users(self):
-        with open(self.users_file, 'w') as f:
-            json.dump(self.users, f, indent=4)
+        try:
+            with open(self.users_file, 'w') as f:
+                json.dump(self.users, f, indent=4)
+        except Exception as e:
+            print(f"Error saving users locally: {e}")
+            raise e
+        
+        # Upload to Cloud after every save
+        if hasattr(self, 'cloud_storage'):
+            try:
+                self.cloud_storage.upload_file(self.users_file, "users_db.json")
+            except Exception as e:
+                print(f"Warning: Failed to sync users to cloud: {e}")
+
+    def _sync_user_to_firestore(self, username):
+        """Helper to sync a single user to Firestore"""
+        if self.db_firestore and username in self.users:
+            try:
+                self.db_firestore.collection('users').document(username).set(self.users[username])
+            except Exception as e:
+                print(f"[Auth] Failed to sync user {username} to Firestore: {e}")
+                # Do not raise, allow local operation to continue
+
+    def seed_users(self):
+        """Seed users from cloud_users_seed.json if DB is empty"""
+        if self.users:
+            return # Already has users
+            
+        seed_path = os.path.join(self.data_dir, "cloud_users_seed.json")
+        if not os.path.exists(seed_path):
+            # Fallback for different CWD
+            seed_path = os.path.join(os.getcwd(), "data", "users", "cloud_users_seed.json")
+        
+        if os.path.exists(seed_path):
+            try:
+                print(f"[Auth] Seeding users from {seed_path}...")
+                with open(seed_path, 'r') as f:
+                    seed_data = json.load(f)
+                
+                self.users.update(seed_data)
+                self._save_users()
+                print(f"[Auth] Seeded {len(seed_data)} users.")
+                
+                # Also ensure user directories exist for seeded users
+                for username in seed_data:
+                    user_path = os.path.join(self.data_dir, username)
+                    if not os.path.exists(user_path):
+                        os.makedirs(user_path)
+                        # Initialize paper wallet
+                        with open(os.path.join(user_path, "paper_wallet.json"), 'w') as f:
+                            json.dump({"USDT": 10000.0, "BTC": 0.0, "ETH": 0.0}, f)
+                        # Initialize trade log
+                        with open(os.path.join(user_path, "trade_history.json"), 'w') as f:
+                            json.dump([], f)
+                            
+            except Exception as e:
+                print(f"[Auth] Seeding Failed: {e}")
 
     def _hash_password(self, password, salt=None):
         if not salt:
@@ -203,7 +306,8 @@ class AuthManager:
         
         salt, hashed_pw = self._hash_password(password)
         
-        self.users[username] = {
+        # Create user object
+        user_data = {
             "email": email,
             "salt": salt,
             "password_hash": hashed_pw,
@@ -217,22 +321,51 @@ class AuthManager:
                 "notifications_enabled": True
             }
         }
-        self._save_users()
         
-        # Create user specific data directory
-        user_path = os.path.join(self.data_dir, username)
-        if not os.path.exists(user_path):
-            os.makedirs(user_path)
-            # Initialize paper wallet
-            with open(os.path.join(user_path, "paper_wallet.json"), 'w') as f:
-                json.dump({"USDT": 10000.0, "BTC": 0.0, "ETH": 0.0}, f)
-            # Initialize trade log
-            with open(os.path.join(user_path, "trade_history.json"), 'w') as f:
-                json.dump([], f)
+        # Try to save and create directories
+        try:
+            self.users[username] = user_data
+            self._save_users()
+            self._sync_user_to_firestore(username)
+            
+            # Create user specific data directory
+            user_path = os.path.join(self.data_dir, username)
+            if not os.path.exists(user_path):
+                os.makedirs(user_path)
+                # Initialize paper wallet
+                with open(os.path.join(user_path, "paper_wallet.json"), 'w') as f:
+                    json.dump({"USDT": 10000.0, "BTC": 0.0, "ETH": 0.0}, f)
+                # Initialize trade log
+                with open(os.path.join(user_path, "trade_history.json"), 'w') as f:
+                    json.dump([], f)
+                    
+        except Exception as e:
+            # Rollback if possible
+            if username in self.users:
+                del self.users[username]
+                # Try to save the reverted state, but ignore errors if it fails again
+                try: self._save_users()
+                except: pass
+            
+            print(f"Registration failed: {e}")
+            return False, f"Registration failed: {str(e)}"
                 
         return True, "User registered successfully"
 
     def login_user(self, username, password):
+        if username not in self.users:
+            # Try reloading users from disk/cloud
+            self._load_users()
+            
+        # Double check Firestore specifically for this user if still missing
+        if username not in self.users and self.db_firestore:
+            try:
+                doc = self.db_firestore.collection('users').document(username).get()
+                if doc.exists:
+                    self.users[username] = doc.to_dict()
+            except Exception as e:
+                print(f"[Auth] Firestore Lookup Error: {e}")
+
         if username not in self.users:
             return False, "User not found"
         
@@ -299,30 +432,47 @@ class AuthManager:
         self._save_users()
         return True, "Password updated successfully"
 
-    def save_api_keys(self, username, exchange, api_key, api_secret):
+    def save_api_keys(self, username, exchange, api_key, api_secret, encryption_key=None):
         """
-        Save API keys for a user. 
-        WARNING: Stored in plain text in local JSON. Use with caution.
+        Save API keys for a user (Encrypted).
         """
         if username in self.users:
             if 'api_keys' not in self.users[username]:
                 self.users[username]['api_keys'] = {}
             
-            self.users[username]['api_keys'][exchange] = {
-                'api_key': api_key,
-                'api_secret': api_secret
+            # Encrypt sensitive data
+            enc_key = self.security.encrypt_sensitive_data(api_key)
+            enc_secret = self.security.encrypt_sensitive_data(api_secret)
+            
+            data = {
+                'api_key': enc_key,
+                'api_secret': enc_secret
             }
+            
+            if encryption_key:
+                data['encryption_key'] = self.security.encrypt_sensitive_data(encryption_key)
+
+            self.users[username]['api_keys'][exchange] = data
             self._save_users()
             return True
         return False
 
     def get_api_keys(self, username, exchange):
-        """Retrieve API keys for a user and exchange"""
+        """Retrieve API keys for a user and exchange (Decrypted) as a dictionary"""
         if username in self.users:
             keys = self.users[username].get('api_keys', {}).get(exchange)
             if keys:
-                return keys['api_key'], keys['api_secret']
-        return None, None
+                # Decrypt sensitive data
+                dec_keys = {}
+                if 'api_key' in keys:
+                    dec_keys['api_key'] = self.security.decrypt_sensitive_data(keys['api_key'])
+                if 'api_secret' in keys:
+                    dec_keys['api_secret'] = self.security.decrypt_sensitive_data(keys['api_secret'])
+                if 'encryption_key' in keys:
+                    dec_keys['encryption_key'] = self.security.decrypt_sensitive_data(keys['encryption_key'])
+                
+                return dec_keys
+        return None
 
     def delete_api_keys(self, username, exchange):
         """Remove API keys for a user and exchange"""
@@ -332,6 +482,52 @@ class AuthManager:
                 self._save_users()
                 return True
         return False
+
+    def save_private_key(self, username, address, private_key, chain_id="1"):
+        """Save a Web3 wallet private key (Encrypted)"""
+        if username in self.users:
+            if 'wallets' not in self.users[username]:
+                self.users[username]['wallets'] = []
+            
+            # Check if wallet already exists
+            existing_wallet = next((w for w in self.users[username]['wallets'] if w['address'] == address), None)
+            
+            enc_pk = self.security.encrypt_sensitive_data(private_key)
+            
+            if existing_wallet:
+                existing_wallet['private_key'] = enc_pk
+                existing_wallet['chain_id'] = chain_id
+            else:
+                self.users[username]['wallets'].append({
+                    'address': address,
+                    'private_key': enc_pk,
+                    'chain_id': chain_id,
+                    'type': 'web3'
+                })
+            self._save_users()
+            return True
+        return False
+
+    def get_private_key(self, username, address):
+        """Retrieve a Web3 private key (Decrypted)"""
+        if username in self.users and 'wallets' in self.users[username]:
+            wallet = next((w for w in self.users[username]['wallets'] if w['address'] == address), None)
+            if wallet and 'private_key' in wallet:
+                return self.security.decrypt_sensitive_data(wallet['private_key'])
+        return None
+
+    def get_user_wallets(self, username):
+        """Retrieve list of user wallets (without private keys)"""
+        if username in self.users and 'wallets' in self.users[username]:
+            # Return safe copy without private keys
+            safe_wallets = []
+            for w in self.users[username]['wallets']:
+                safe_w = w.copy()
+                if 'private_key' in safe_w:
+                    del safe_w['private_key']
+                safe_wallets.append(safe_w)
+            return safe_wallets
+        return []
 
     def update_email(self, username, password, new_email):
         success, _ = self.login_user(username, password)

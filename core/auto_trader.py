@@ -105,7 +105,17 @@ class AutoTrader:
         """
         Single iteration of the trading loop.
         """
+        # Check Global Enable Switch
+        if hasattr(self.bot, 'auto_trade_enabled') and not self.bot.auto_trade_enabled:
+            return
+
         try:
+            # Update Timeframe from Bot (UI Source of Truth)
+            if hasattr(self.bot, 'auto_trader_timeframe') and self.bot.auto_trader_timeframe:
+                 self.tf = self.bot.auto_trader_timeframe
+            elif hasattr(self.bot, 'timeframe') and self.bot.timeframe:
+                self.tf = self.bot.timeframe
+
             # 1. Fetch Data
             # Limit 300 matches user code
             ohlcv = self.ex.fetch_ohlcv(symbol, timeframe=self.tf, limit=300)
@@ -125,6 +135,10 @@ class AutoTrader:
                     atr = row["atr"]
             
             # Use Strategy Logic to get Score
+            # Update signal strategy to match bot's active strategy (Dynamic Switching)
+            if self.bot.active_strategy:
+                self.signal = self.bot.active_strategy
+                
             # execute() fetches its own data usually, but passing data could be optimized in future
             signal_obj = self.signal.execute(symbol, data=ohlcv)
             
@@ -154,6 +168,17 @@ class AutoTrader:
 
             # 5. Sizing
             qty, stop_distance = self.risk.position_size(price, atr)
+            
+            # Check for Manual Amount Override from UI
+            if hasattr(self.bot, 'auto_trader_amount') and self.bot.auto_trader_amount > 0:
+                qty = self.bot.auto_trader_amount
+                logging.info(f"Using Auto-Trader Fixed Amount: {qty:.4f} {symbol}")
+            elif hasattr(self.bot, 'trade_amount_override') and self.bot.trade_amount_override > 0:
+                # Use fixed USDT amount if possible, or fixed QTY? 
+                # Let's assume input is USDT amount, so Qty = Amount / Price
+                qty = self.bot.trade_amount_override / price
+                logging.info(f"Using Manual Override Amount: ${self.bot.trade_amount_override} -> {qty:.4f} {symbol}")
+            
             if qty <= 0:
                 logging.info("Qty too small; skipping.")
                 return
@@ -249,33 +274,27 @@ class AutoTrader:
                     elif side == 'sell' and current_price <= tp:
                         close_reason = "Take Profit"
                 
-                # Dynamic Trailing Stop (New Better Logic)
-                # Move SL to Breakeven if > 1% profit, then trail by 1.5%
+                # Dynamic Trailing Stop (Delegated to AdaptiveRiskManager)
                 entry_price = float(entry)
+                atr = float(pos.get('atr', 0))
+                
+                # Fallback ATR if missing or zero (1% of price)
+                if atr <= 0: atr = current_price * 0.01
+                
                 if entry_price > 0:
+                    new_sl = self.risk.update_trailing_stop(entry_price, current_price, sl, side, atr)
+                    
                     if side == 'buy':
-                        # Update Max Price
-                        pos['max_price'] = max(pos.get('max_price', entry_price), current_price)
-                        max_p = pos['max_price']
-                        
-                        # 1. Breakeven Trigger (e.g. 1% gain)
-                        if current_price >= entry_price * 1.01:
-                            new_sl = max(sl, entry_price * 1.001) # Move to slightly above entry
-                            # 2. Trailing Trigger (Trail by 1.5% from max)
-                            trail_sl = max_p * 0.985 
-                            pos['sl'] = max(new_sl, trail_sl)
-                            
-                    elif side == 'sell':
-                        # Update Min Price
-                        pos['min_price'] = min(pos.get('min_price', entry_price), current_price)
-                        min_p = pos['min_price']
-                        
-                        # 1. Breakeven Trigger
-                        if current_price <= entry_price * 0.99:
-                            new_sl = min(sl, entry_price * 0.999) # Move to slightly below entry
-                            # 2. Trailing Trigger
-                            trail_sl = min_p * 1.015
-                            pos['sl'] = min(new_sl, trail_sl)
+                        if new_sl > sl:
+                            pos['sl'] = new_sl
+                    else: # sell
+                        # For sell, SL should move down (lower price)
+                        # Current SL is above entry. New SL should be lower than old SL.
+                        # Wait, logic in risk.py handles direction.
+                        # If risk.py returns a tighter SL, we take it.
+                        # For sell, tighter means LOWER value (closer to price).
+                        if new_sl < sl:
+                            pos['sl'] = new_sl
                 
                 if close_reason:
                     logging.info(f"{symbol} hit {close_reason} at {current_price} (Entry: {entry}). Closing...")

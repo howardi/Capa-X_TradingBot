@@ -2,6 +2,7 @@ import time
 import random
 import json
 import logging
+import requests
 from datetime import datetime
 
 class TonConnectManager:
@@ -61,20 +62,22 @@ class TonConnectManager:
     def mock_approve_connection(self):
         """
         Simulates a successful wallet connection response.
+        DISABLED for Live Security.
         """
         # Generate a random realistic TON address
         # EQ... (48 chars)
-        chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        addr_hash = "".join(random.choice(chars) for _ in range(43))
-        address = f"EQB{addr_hash}"
+        # chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        # addr_hash = "".join(random.choice(chars) for _ in range(43))
+        # address = f"EQB{addr_hash}"
         
-        return {
-            "address": address,
-            "chain": "-239", # Mainnet
-            "wallet_type": "tonkeeper",
-            "public_key": "simulated_pub_key",
-            "connected_at": time.time()
-        }
+        # return {
+        #     "address": address,
+        #     "chain": "-239", # Mainnet
+        #     "wallet_type": "tonkeeper",
+        #     "public_key": "simulated_pub_key",
+        #     "connected_at": time.time()
+        # }
+        raise NotImplementedError("Mock connection disabled for Live security.")
 
     def get_balance(self, address):
         """
@@ -90,61 +93,79 @@ class TonConnectManager:
         # Try to fetch REAL balance
         try:
             # tonapi.io v2 API (public)
-            url = f"https://tonapi.io/v2/accounts/{address}"
-            response = requests.get(url, timeout=5)
+            # Use a robust public endpoint or multiple failovers
+            endpoints = [
+                f"https://tonapi.io/v2/accounts/{address}",
+                f"https://toncenter.com/api/v2/getAddressBalance?address={address}"
+            ]
             
-            if response.status_code == 200:
-                data = response.json()
-                # Balance is in nanoton
-                real_balance = int(data.get('balance', 0)) / 1e9
+            real_balance = 0.0
+            found = False
+            
+            # 1. Try TONAPI
+            try:
+                resp = requests.get(endpoints[0], timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    real_balance = int(data.get('balance', 0)) / 1e9
+                    found = True
+            except:
+                pass
                 
-                # Fetch USDT Balance (Jetton) - simplified, maybe just fetch TON for now
-                # Or mock USDT if real TON found
-                usdt_balance = 0.0
-                
+            # 2. Try TonCenter (Fallback)
+            if not found:
+                try:
+                    resp = requests.get(endpoints[1], timeout=3)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get('ok'):
+                            real_balance = int(data.get('result', 0)) / 1e9
+                            found = True
+                except:
+                    pass
+
+            if found:
                 # Store
                 self.balances[address] = {
                     "TON": round(real_balance, 4),
-                    "USDT": round(usdt_balance, 2)
+                    "USDT": 0.0 # TODO: Fetch Jetton balance
                 }
                 return self.balances[address]
+                
         except Exception as e:
             logging.warning(f"Failed to fetch real TON balance: {e}")
 
-        # Fallback: Simulate fetching from TON API
-        # Random balance between 10 and 5000 TON
-        # Seed with address to be consistent
-        random.seed(address)
-        balance = random.uniform(10.5, 5000.0)
-        usdt_balance = random.uniform(0, 20000.0)
-        random.seed() # Reset
-        
-        # Store for session
-        self.balances[address] = {
-            "TON": round(balance, 4),
-            "USDT": round(usdt_balance, 2)
-        }
-        
-        return self.balances[address]
+        # Fallback: Return 0.0 (No fake data)
+        return {"TON": 0.0, "USDT": 0.0}
 
     def estimate_gas(self, transaction_type):
         """
         Estimate gas fees for a transaction.
         """
+        # Return standard estimates or fetch real fees. 
+        # For now, return a static standard fee (not random).
         if transaction_type == "swap":
-            return 0.08 + random.uniform(0, 0.05)
+            return 0.1
         elif transaction_type == "transfer":
-            return 0.005 + random.uniform(0, 0.002)
+            return 0.01
         return 0.01
+
+    def send_transaction(self, address, amount, side, symbol="TON"):
+        """
+        Execute a transaction (Real Only).
+        """
+        return {
+            "status": "failed", 
+            "error": "Real TON transactions require active wallet integration. Fake execution is disabled."
+        }
 
     def sign_transaction(self, tx_details):
         """
-        Simulate the transaction signing process.
+        Sign the transaction via the wallet.
         """
         # In reality, this sends a request to the wallet app via the bridge
         return {
-            "status": "signed",
-            "tx_hash": f"boc_{int(time.time())}_{random.randint(10000,99999)}",
-            "fee": self.estimate_gas("swap")
+            "status": "failed",
+            "error": "Signing requires active bridge connection."
         }
 

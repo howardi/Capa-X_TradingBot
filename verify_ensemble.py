@@ -2,7 +2,8 @@ import pandas as pd
 from core.bot import TradingBot
 
 def verify_ensemble():
-    print("Initializing TradingBot...")
+    print("Initializing TradingBot (ENSEMBLE VERIFICATION)...")
+    print("⚠️ NOTE: Using SYNTHETIC data for strategy verification.")
     bot = TradingBot()
     
     # Mock Data for testing

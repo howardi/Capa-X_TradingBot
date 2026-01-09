@@ -57,9 +57,14 @@ class SentimentEngine:
             headlines = self.parse_headlines(content)
             all_headlines.extend(headlines)
             
-        # If no internet or fetch failed, fall back to mock for demo stability
+        # If no internet or fetch failed, return Neutral
         if not all_headlines:
-             return self._mock_sentiment(symbol)
+             return {
+                "score": 50.0,
+                "classification": "Neutral",
+                "trending_topics": [],
+                "volume_24h": "Unknown"
+             }
              
         # Analyze Headlines
         score = 50.0 # Neutral start

@@ -56,11 +56,7 @@ class SoundEngine:
         src = self.sounds.get(sound_name)
         if src:
             # Autoplay with hidden attribute
-            return f"""
-                <audio autoplay="true" style="display:none;">
-                    <source src="{src}" type="audio/wav">
-                </audio>
-            """
+            return f'<audio autoplay="true" style="display:none;"><source src="{src}" type="audio/wav"></audio>'
         return ""
 
     def get_ambient_html(self):
@@ -70,12 +66,5 @@ class SoundEngine:
             
         src = self.sounds.get('ambient')
         if src:
-            return f"""
-                <audio autoplay="true" loop="true" style="display:none;">
-                    <source src="{src}" type="audio/wav">
-                </audio>
-                <div style="position:fixed; bottom:10px; right:10px; opacity:0.5; font-size:0.8em;">
-                    🎵 Ambient
-                </div>
-            """
+            return f'<audio autoplay="true" loop="true" style="display:none;"><source src="{src}" type="audio/wav"></audio><div style="position:fixed; bottom:10px; right:10px; opacity:0.5; font-size:0.8em;">🎵 Ambient</div>'
         return ""

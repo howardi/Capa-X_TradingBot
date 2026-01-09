@@ -57,8 +57,9 @@ class TestCapacityBayEliteFeatures(unittest.TestCase):
         print(f"Initial Risk Amount: ${initial_risk_amount}")
         
         # Test 2: After Drawdown > 5%
-        self.risk.current_capital = 9000 # 10% Drawdown
-        self.risk.update_metrics(9000) # Update max_dd
+        # Set demo balance to reflect drawdown and update metrics
+        self.risk.demo_balance = 9000
+        self.risk.update_metrics(current_balance=9000) # Update max_dd
         
         risk_res_dd = self.risk.calculate_risk_size(volatility_atr=500, entry_price=50000, stop_loss_price=49000)
         print(f"Risk Amount after Drawdown: ${risk_res_dd['risk_amount']}")
@@ -81,7 +82,10 @@ class TestCapacityBayEliteFeatures(unittest.TestCase):
             regime_data=regime_data,
             liquidity_data=liquidity_data,
             cross_market_valid=cross_market,
-            risk_data=risk_data
+            risk_data=risk_data,
+            safety_data={'safe': True},
+            behavior_allowed=True,
+            ensemble_score=0.8
         )
         
         print(f"Decision Output: {decision}")

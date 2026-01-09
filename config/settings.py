@@ -25,6 +25,11 @@ WALLET_ADDRESS = os.getenv('WALLET_ADDRESS', '')
 PRIVATE_KEY = os.getenv('PRIVATE_KEY', '')
 INFURA_URL = os.getenv('INFURA_URL', 'https://mainnet.infura.io/v3/your_infura_key')
 
+# --- Fiat / Flutterwave Settings ---
+FLUTTERWAVE_PUBLIC_KEY = os.getenv('FLUTTERWAVE_PUBLIC_KEY', 'FLWPUBK-aded1251ab1fccfd69b058608f38f7a8-X')
+FLUTTERWAVE_SECRET_KEY = os.getenv('FLUTTERWAVE_SECRET_KEY', 'FLWSECK-2d9e29e2c7e85214e55fa642cff59b99-19b9abc3310vt-X')
+FLUTTERWAVE_ENCRYPTION_KEY = os.getenv('FLUTTERWAVE_ENCRYPTION_KEY', '2d9e29e2c7e8eaa49db18d1b')
+
 # Default Configuration
 DEFAULT_TIMEFRAME = '1h'
 DEFAULT_SYMBOL = 'BTC/USDT'

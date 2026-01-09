@@ -170,6 +170,28 @@ class CapacityBayBrain:
             'status': 'Favorable' if score > 0.7 else 'Poor'
         }
 
+    def analyze_market(self, df: pd.DataFrame) -> dict:
+        """
+        Aggregated Analysis for UI Dashboard.
+        Combines Regime Detection and AI Prediction.
+        """
+        # 1. Regime Detection
+        regime_info = self.detect_market_regime(df)
+        
+        # 2. AI Prediction
+        # Need to ensure df has features calculated
+        if 'rsi' not in df.columns:
+            from core.analysis import TechnicalAnalysis
+            df = TechnicalAnalysis.calculate_indicators(df)
+            
+        ai_score = self.get_ai_prediction(df)
+        
+        return {
+            'regime': regime_info,
+            'score': ai_score,
+            'features': df.iloc[-1].to_dict() if not df.empty else {}
+        }
+
     def cross_market_check(self, btc_df: pd.DataFrame, current_bias: str) -> bool:
         """
         Module 3: Correlation Guard (BTC Filter)

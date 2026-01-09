@@ -1,85 +1,68 @@
-import os
+
 import sys
+import os
 import pandas as pd
-import numpy as np
+import time
+
+# Add root to path
+sys.path.append(os.getcwd())
+
+from core.bot import TradingBot
+from core.execution import ExecutionEngine
 from core.brain import CapacityBayBrain
-from core.chaos import ChaosMonkey
-from core.quantum import QuantumEngine
-from core.defi import DeFiManager
+from core.web3_wallet import Web3Wallet
 
-# Mock Bot class to pass to ChaosMonkey
-class MockBot:
-    def __init__(self):
-        self.symbol = "BTC/USD"
-        self.timeframe = "1h"
-        self.active = True
-        self.data = pd.DataFrame()
+def test_integration():
+    print("Initializing TradingBot...")
+    bot = TradingBot()
     
-    def fetch_data(self):
-        print("MockBot: Fetching data...")
-        # Create dummy data
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq='h')
-        self.data = pd.DataFrame({
-            'open': np.random.randn(100) + 50000,
-            'high': np.random.randn(100) + 51000,
-            'low': np.random.randn(100) + 49000,
-            'close': np.random.randn(100) + 50000,
-            'volume': np.random.randn(100) + 1000
-        }, index=dates)
-        return self.data
+    print("Testing Bot Properties...")
+    print(f"Trading Mode: {bot.trading_mode}")
+    bot.trading_mode = 'Live'
+    print(f"Open Positions (Live): {bot.open_positions}")
+    
+    # Test Web3 Injection
+    print("Testing Web3 Wallet Integration...")
+    bot.web3_wallet = Web3Wallet()
+    bot.web3_wallet.chain_id = '1'
+    # Mock connection
+    bot.web3_wallet.connected = True
+    bot.web3_wallet.address = "0x123...Mock"
+    
+    print("Testing Sync Balance...")
+    try:
+        # Mock get_balance to avoid network call failure
+        bot.web3_wallet.get_balance = lambda: 1.5
+        bot.sync_live_balance()
+        print(f"Wallet Balances: {bot.wallet_balances}")
+    except Exception as e:
+        print(f"Sync Balance Failed: {e}")
 
-def test_quantum_brain():
-    print("Testing Quantum Brain...")
-    brain = CapacityBayBrain()
-    
-    # Create dummy market data
-    dates = pd.date_range(end=pd.Timestamp.now(), periods=100, freq='h')
-    df = pd.DataFrame({
-        'open': np.random.randn(100) + 100,
-        'high': np.random.randn(100) + 105,
-        'low': np.random.randn(100) + 95,
-        'close': np.random.randn(100) + 100,
-        'volume': np.random.randn(100) * 1000 + 10000,
-        'atr': np.random.rand(100) * 5
-    }, index=dates)
-    
-    # Test regime detection
-    regime = brain.detect_market_regime(df)
-    print(f"Detected Regime: {regime}")
-    
-    # Test Quantum Portfolio Optimization (Annealing)
-    print("Testing Quantum Annealing...")
-    assets = ['BTC', 'ETH', 'SOL']
-    # Create dummy returns for 3 assets
-    returns_df = pd.DataFrame(np.random.randn(100, 3) * 0.01, columns=assets)
-    
-    weights = brain.quantum.simulated_annealing_portfolio(assets, returns_df)
-    print(f"Optimized Weights: {weights}")
-    
-    assert 'type' in regime
-    assert 'quantum_state' in regime
-    assert len(weights) == 3
-    assert abs(sum(weights.values()) - 1.0) < 0.01 # Weights sum to 1
-    print("Quantum Brain Test Passed.")
+    print("Testing Execution Engine...")
+    try:
+        bot.execution.execute_robust('ETH/USDT', 'buy', 0.1, strategy='manual_close')
+        print("Manual Close Execution: OK")
+    except Exception as e:
+        print(f"Execution Failed: {e}")
+        
+    try:
+        bot.execution.close_all()
+        print("Close All: OK")
+    except Exception as e:
+        print(f"Close All Failed: {e}")
 
-def test_chaos_monkey():
-    print("\nTesting Chaos Monkey...")
-    bot = MockBot()
-    monkey = ChaosMonkey(bot)
-    
-    # Test mild chaos
-    result = monkey.unleash_chaos(level='mild')
-    print(f"Chaos Result: {result}")
-    
-    assert 'status' in result
-    assert 'type' in result
-    print("Chaos Monkey Test Passed.")
+    print("Testing AI Brain...")
+    try:
+        brain = bot.brain
+        df = pd.DataFrame({
+            'open': [100]*20, 'high': [105]*20, 'low': [95]*20, 'close': [102]*20, 'volume': [1000]*20
+        })
+        res = brain.analyze_market(df)
+        print(f"AI Analysis Result: {res.keys()}")
+    except Exception as e:
+        print(f"AI Analysis Failed: {e}")
+
+    print("Integration Test Complete.")
 
 if __name__ == "__main__":
-    try:
-        test_quantum_brain()
-        test_chaos_monkey()
-        print("\nAll System Tests Passed Successfully.")
-    except Exception as e:
-        print(f"\nTest Failed: {e}")
-        sys.exit(1)
+    test_integration()

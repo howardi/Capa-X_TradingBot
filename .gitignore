@@ -12,3 +12,8 @@ trade_log.json
 active_positions.json
 data/users/sessions.json
 data/users/users_db.json
+trading_bot.db
+secret.key
+tunnel_info.json
+debug_*.txt
+*.pem

@@ -1,105 +1,85 @@
-
-import json
-import os
-import hashlib
-from datetime import datetime, timedelta
-import pandas as pd
+from typing import Dict, Optional, List
+import time
 
 class ComplianceManager:
     """
-    Risk & Compliance Module.
-    Handles layered limits, kill-switches, audit logging, and policy enforcement.
+    Handles KYC/AML, Transaction Limits, and Risk Monitoring for Nigerian Users.
     """
-    def __init__(self, bot):
-        self.bot = bot
-        self.audit_log_file = "compliance_audit.log"
-        self.config = {
-            "max_daily_loss_pct": 5.0,  # 5% max daily drawdown
-            "max_drawdown_pct": 10.0,   # 10% total max drawdown
-            "max_leverage": 5.0,
-            "restricted_assets": ["XMR", "DASH", "ZEC"], # Privacy coins often restricted
-            "required_confirmations": 1
-        }
-        self.daily_pnl = 0.0
-        self.starting_equity = 10000.0 # Should be synced with wallet
-        self.is_kill_switch_active = False
+    
+    TIERS = {
+        0: {"daily_limit": 50000.0, "single_limit": 20000.0, "req": "Email Verified"},
+        1: {"daily_limit": 500000.0, "single_limit": 100000.0, "req": "BVN Verified"},
+        2: {"daily_limit": 5000000.0, "single_limit": 1000000.0, "req": "ID Verified"},
+        3: {"daily_limit": float('inf'), "single_limit": float('inf'), "req": "Enhanced Due Diligence"}
+    }
+
+    def __init__(self, storage_manager=None):
+        self.storage = storage_manager
+
+    def get_user_tier(self, user_id: str) -> int:
+        """
+        Get user KYC Tier. 
+        For MVP, default to Tier 1 if not found.
+        In prod, fetch from User Table.
+        """
+        # Simulated Tier for MVP
+        if self.storage:
+            # Check if user has stored KYC data
+            # tier = self.storage.get_user_kyc_tier(user_id)
+            pass
+        return 1
+
+    def check_transaction_limit(self, user_id: str, amount: float, tx_type: str = "withdrawal") -> Dict:
+        """
+        Check if transaction exceeds daily or single limits.
+        """
+        tier_level = self.get_user_tier(user_id)
+        tier_limits = self.TIERS.get(tier_level, self.TIERS[0])
         
-        # Initialize Audit Log
-        if not os.path.exists(self.audit_log_file):
-            self.log_audit_event("SYSTEM_INIT", "Compliance Module Initialized", "SYSTEM")
-
-    def log_audit_event(self, event_type: str, description: str, actor: str, meta: dict = None):
-        """
-        Immutable-ish Audit Logging (Append Only with Hash Chaining concept)
-        """
-        entry = {
-            "timestamp": str(datetime.now()),
-            "event_type": event_type,
-            "description": description,
-            "actor": actor,
-            "meta": meta or {}
-        }
-        
-        # Simple checksum for integrity (in production, use Merkle tree or blockchain)
-        entry_str = json.dumps(entry, sort_keys=True)
-        checksum = hashlib.sha256(entry_str.encode()).hexdigest()
-        entry['checksum'] = checksum
-        
-        with open(self.audit_log_file, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-
-    def check_trade_compliance(self, symbol: str, side: str, amount: float, price: float) -> dict:
-        """
-        Pre-trade compliance check.
-        Returns: {'allowed': bool, 'reason': str}
-        """
-        if self.is_kill_switch_active:
-            return {'allowed': False, 'reason': "KILL SWITCH ACTIVE"}
+        # 1. Single Transaction Limit
+        if amount > tier_limits["single_limit"]:
+            return {
+                "allowed": False, 
+                "message": f"Amount exceeds single limit of ₦{tier_limits['single_limit']:,.2f} for Tier {tier_level}"
+            }
             
-        # 1. Restricted Assets Policy
-        base_asset = symbol.split('/')[0]
-        if base_asset in self.config["restricted_assets"]:
-            self.log_audit_event("COMPLIANCE_BLOCK", f"Attempted trade on restricted asset {base_asset}", "BOT")
-            return {'allowed': False, 'reason': f"Restricted Asset: {base_asset}"}
+        # 2. Daily Limit Check
+        # Fetch today's total volume for this user and type
+        daily_total = self._get_daily_volume(user_id, tx_type)
+        if (daily_total + amount) > tier_limits["daily_limit"]:
+             return {
+                "allowed": False, 
+                "message": f"Daily limit of ₦{tier_limits['daily_limit']:,.2f} exceeded. Used: ₦{daily_total:,.2f}"
+            }
             
-        # 2. Daily Loss Limit
-        current_drawdown = -self.daily_pnl if self.daily_pnl < 0 else 0
-        loss_pct = (current_drawdown / self.starting_equity) * 100
-        if loss_pct >= self.config["max_daily_loss_pct"]:
-            self.trigger_kill_switch(f"Daily Loss Limit Exceeded ({loss_pct:.2f}%)")
-            return {'allowed': False, 'reason': "Daily Loss Limit Exceeded"}
+        return {"allowed": True, "tier": tier_level}
+
+    def _get_daily_volume(self, user_id: str, tx_type: str) -> float:
+        """
+        Calculate total volume for today.
+        In prod, query StorageManager for transactions since midnight.
+        """
+        if self.storage:
+            # txs = self.storage.get_transactions_since(user_id, tx_type, midnight_timestamp)
+            # return sum(t['amount'] for t in txs)
             
-        # 3. Notional Value Limits (e.g. Max trade size $50k)
-        notional_value = amount * price
-        if notional_value > 50000:
-             return {'allowed': False, 'reason': f"Trade Size Limit Exceeded (${notional_value:.2f})"}
+            # Use 'get_recent_fiat_transactions' as a proxy for now if we don't have user_id specific query
+            # Ideally we need a method `get_daily_volume(user_id)`
+            pass
+        return 0.0 # Mock for MVP
 
-        return {'allowed': True, 'reason': "Compliance Passed"}
-
-    def update_pnl(self, realized_pnl: float):
+    def verify_identity(self, user_id: str, bvn: str = None, nin: str = None) -> Dict:
         """
-        Update internal PnL tracker.
+        Mock Identity Verification (BVN/NIN).
+        Integrate with Smile Identity / Dojah / YouVerify here.
         """
-        self.daily_pnl += realized_pnl
-        # Reset logic would go here (e.g. check date change)
+        if bvn and len(bvn) == 11:
+            return {"status": "success", "tier": 1, "message": "BVN Verified"}
+        return {"status": "failed", "message": "Invalid ID"}
 
-    def trigger_kill_switch(self, reason: str):
+    def log_suspicious_activity(self, user_id: str, action: str, details: Dict):
         """
-        Emergency Halt.
+        Log suspicious events for AML monitoring.
         """
-        self.is_kill_switch_active = True
-        self.log_audit_event("KILL_SWITCH_TRIGGERED", reason, "SYSTEM")
-        print(f"🚨 KILL SWITCH TRIGGERED: {reason}")
-        # In a real system, this would cancel all open orders immediately via bot.data_manager
-
-    def reset_kill_switch(self, actor: str):
-        self.is_kill_switch_active = False
-        self.daily_pnl = 0.0 # Optional reset
-        self.log_audit_event("KILL_SWITCH_RESET", "Manual Reset", actor)
-
-    def get_status(self):
-        return {
-            "kill_switch": self.is_kill_switch_active,
-            "daily_loss_pct": (-self.daily_pnl / self.starting_equity * 100) if self.daily_pnl < 0 else 0.0,
-            "allowed_assets": "ALL except " + ",".join(self.config["restricted_assets"])
-        }
+        print(f"AML ALERT: User {user_id} performed {action}: {details}")
+        # Save to 'compliance_logs' table

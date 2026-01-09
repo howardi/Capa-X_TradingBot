@@ -8,7 +8,9 @@ import importlib
 # This fixes issues where exec() uses cached modules with missing attributes
 try:
     import core.styles
+    import core.defi
     importlib.reload(core.styles)
+    importlib.reload(core.defi)
 except ImportError:
     pass
 
@@ -19,7 +21,7 @@ except ImportError:
     APP_NAME = "CapacityBay"
 
 # Set page config moved to dashboard_impl.py for better control
-# st.set_page_config(page_title=APP_NAME, layout="wide")
+st.set_page_config(page_title=APP_NAME, layout="wide")
 
 def main():
     try:

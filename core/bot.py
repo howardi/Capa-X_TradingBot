@@ -12,7 +12,9 @@ from core.risk import AdaptiveRiskManager
 from core.strategies import (
     SmartTrendStrategy, GridTradingStrategy, MeanReversionStrategy, 
     FundingArbitrageStrategy, BasisTradeStrategy, LiquiditySweepStrategy, OrderFlowStrategy,
-    SwingRangeStrategy, SniperStrategy, WeightedSignalStrategy
+    SwingRangeStrategy, SniperStrategy, WeightedSignalStrategy,
+    SpatialArbitrageStrategy,
+    EnsembleStrategy
 )
 from core.arbitrage import ArbitrageScanner
 from core.sentiment import SentimentEngine
@@ -29,13 +31,23 @@ from core.auto_trader import AutoTrader
 from core.allocator import ProfitOptimizer 
 from config.settings import DEFAULT_SYMBOL, DEFAULT_TIMEFRAME
 from config.trading_config import TRADING_CONFIG
+from core.storage import StorageManager
+from core.auth import AuthManager
+from core.web3_wallet import Web3Wallet
+from core.fiat.fiat_manager import FiatManager
 
 import json
 import os
 
 class TradingBot:
     def __init__(self, exchange_id='binance'):
+        self.exchange_id = exchange_id
+        self.storage = StorageManager() # Local DB
+        self.auth_manager = AuthManager() # Secure Key Management
+        
         self.data_manager = DataManager(exchange_id)
+        self.web3_wallet = Web3Wallet() # Web3 Integration
+        
         self.analyzer = TechnicalAnalysis()
         self.fundamentals = FundamentalAnalysis()
         
@@ -46,7 +58,7 @@ class TradingBot:
         self._drift_detector = None
         self._ai_trainer = None
         
-        self.risk_manager = AdaptiveRiskManager()
+        self.risk_manager = AdaptiveRiskManager(storage_manager=self.storage)
         self.security = SecurityManager()
         
         # New Modules
@@ -54,13 +66,44 @@ class TradingBot:
         self.sentiment = SentimentEngine()
         self.execution = ExecutionEngine(self)
         self.defi = DeFiManager()
+        self.fiat = FiatManager(self)
         self.notifications = NotificationManager()
         self.feature_store = FeatureStore()
         self.compliance = ComplianceManager(self)
+
+        # --- One-time Balance Migration for User Request ---
+        if self.storage.get_setting("balance_fix_applied_v2", "false") != "true":
+             print("Applying One-time Balance Fix (Add 500 NGN, 0.99 USDT)...")
+             try:
+                 current_ngn = float(self.storage.get_setting("fiat_balance_ngn", 0.0))
+             except:
+                 current_ngn = 0.0
+            
+             try:
+                 current_usdt = float(self.storage.get_setting("usdt_balance", 0.0))
+             except:
+                 current_usdt = 0.0
+             
+             new_ngn = current_ngn + 500.0
+             new_usdt = current_usdt + 0.99
+             
+             self.storage.save_setting("fiat_balance_ngn", new_ngn)
+             # Update virtual credit for sync_live_balance to pick it up
+             current_virtual = float(self.storage.get_setting("virtual_usdt_credit_usd", 0.0) or 0.0)
+             self.storage.save_setting("virtual_usdt_credit_usd", current_virtual + 0.99)
+             
+             self.storage.save_setting("balance_fix_applied_v2", "true")
+             
+             # Also update FiatManager in memory if initialized
+             if self.fiat:
+                 self.fiat.fiat_balance = new_ngn
+             print(f"Balance Fix Applied: NGN {new_ngn}, USDT {new_usdt}")
         
         self.is_running = False
         self.symbol = DEFAULT_SYMBOL
         self.timeframe = DEFAULT_TIMEFRAME
+        self.auto_trader_timeframe = None
+        self.auto_trader_amount = None
         
         # Auto-Trading Engine (CapacityBay Logic)
         self.auto_trader = AutoTrader(self)
@@ -93,10 +136,110 @@ class TradingBot:
             "Liquidity Sweep": LiquiditySweepStrategy(self),
             "Order Flow": OrderFlowStrategy(self),
             "Swing Range": SwingRangeStrategy(self),
-            "Weighted Ensemble": WeightedSignalStrategy(self)
+            "Weighted Ensemble": WeightedSignalStrategy(self),
+            "Spatial Arbitrage": SpatialArbitrageStrategy(self),
+            "Ensemble Brain": EnsembleStrategy(self)
         }
         # Default to Profit Optimizer mode: selects best strategy per regime
         self.active_strategy_name = "Profit Optimization Layer"
+        # Ensure active_strategy is set for UI access even in optimizer mode
+        self.active_strategy = self.strategies.get("Smart Trend")
+
+    def initialize_credentials(self, username):
+        """
+        Load encrypted credentials for the user and initialize connections.
+        """
+        print(f"Initializing Credentials for {username}...")
+        
+        # 1. Load CEX Credentials
+        # We try to find keys for the current exchange_id
+        keys = self.auth_manager.get_api_keys(username, self.exchange_id)
+        if keys and 'api_key' in keys and 'api_secret' in keys:
+            api_key = keys['api_key']
+            api_secret = keys['api_secret']
+            print(f"✅ Found API Keys for {self.exchange_id}. Updating DataManager...")
+            self.data_manager.update_credentials(api_key, api_secret)
+        else:
+            print(f"ℹ️ No API Keys found for {self.exchange_id} (User: {username})")
+
+        # 2. Load Web3 Wallet (First available)
+        wallets = self.auth_manager.get_user_wallets(username)
+        if wallets:
+            # Try to connect the first one found
+            first_wallet = wallets[0]
+            address = first_wallet['address']
+            chain_id = first_wallet.get('chain_id', '1')
+            
+            # Get Private Key
+            pk = self.auth_manager.get_private_key(username, address)
+            if pk:
+                print(f"✅ Found Web3 Wallet {address}. Connecting...")
+                success = self.web3_wallet.connect(pk, chain_id=chain_id)
+                if success:
+                    print(f"✅ Web3 Wallet Connected: {address} ({chain_id})")
+                else:
+                    print(f"❌ Failed to connect Web3 Wallet {address}")
+        else:
+            print(f"ℹ️ No Web3 Wallets found (User: {username})")
+
+        # 3. Initialize Fiat Adapter
+        if hasattr(self, 'fiat'):
+             self.fiat.initialize_adapter(username)
+
+    def sync_live_balance(self):
+        """
+        Fetch real balance from connected Exchange/Wallet and update Risk Manager.
+        """
+        try:
+            balance = 0.0
+            
+            # 1. CEX Balance
+            if self.trading_mode in ['CEX_Proxy', 'CEX_Direct']:
+                if self.data_manager.exchange:
+                    # Fetch free balance of the quote currency (e.g., USDT)
+                    # We assume the bot trades USDT pairs.
+                    # This fetches all balances, might be heavy.
+                    # Let's try fetch_balance()
+                    try:
+                        balances = self.data_manager.exchange.fetch_balance()
+                        # Assume USDT or USD
+                        quote = 'USDT'
+                        if quote in balances:
+                            balance = float(balances[quote]['free'])
+                        elif 'USD' in balances:
+                             balance = float(balances['USD']['free'])
+                    except Exception as e:
+                        print(f"CEX Balance Fetch Error: {e}")
+                        
+            # 2. DEX Balance
+            elif self.trading_mode == 'DEX':
+                if self.web3_wallet.connected:
+                    balance = self.web3_wallet.get_balance()
+            
+            # Update Risk Manager
+            if balance > 0:
+                print(f"Syncing Live Balance: {balance} ({self.trading_mode})")
+                self.risk_manager.update_live_balance(balance)
+                
+        except Exception as e:
+            print(f"Failed to sync live balance: {e}")
+
+    @property
+    def open_positions(self):
+        """Helper to get positions for current mode"""
+        key = self.trading_mode
+        # Fallback if mapped incorrectly
+        if key == 'Live': key = 'CEX_Direct'
+            
+        if key not in self.positions:
+            self.positions[key] = []
+        return self.positions[key]
+
+    @open_positions.setter
+    def open_positions(self, value):
+        key = self.trading_mode
+        if key == 'Live': key = 'CEX_Direct'
+        self.positions[key] = value
         self.active_strategy = self.strategies.get(self.active_strategy_name)
         
         # Initialize Profit Optimizer (Contextual Multi-Armed Bandit)
@@ -153,16 +296,6 @@ class TradingBot:
             from core.ai_optimizer import AITrainer
             self._ai_trainer = AITrainer(self)
         return self._ai_trainer
-
-    @property
-    def open_positions(self):
-        """Return the list of positions for the active trading mode"""
-        return self.positions.get(self.trading_mode, [])
-    
-    @open_positions.setter
-    def open_positions(self, value):
-        """Set positions (mostly for initialization or clearing)"""
-        self.positions[self.trading_mode] = value
 
     def load_positions(self):
         """Load active positions from file to persist state across restarts"""
@@ -222,7 +355,13 @@ class TradingBot:
             elif mode == 'DEX':
                 # DEX Logic (might not need DataManager proxy change, but let's default to no proxy for RPC)
                 # Unless RPC requires it? Usually not.
-                self.data_manager.set_proxy_mode(use_proxy=False)
+                try:
+                    self.data_manager.set_proxy_mode(use_proxy=False)
+                except Exception as e:
+                    print(f"[WARN] Failed to set proxy mode (or load markets) for DEX mode: {e}")
+                    print("[INFO] Continuing in DEX mode (CEX DataManager might be offline)")
+                    self.data_manager.offline_mode = True
+                    self.data_manager.connection_status = "Error (Ignored for DEX)"
             
             # 3. Sync positions to Risk Manager
             self.risk_manager.open_positions = self.positions.get(mode, [])
@@ -242,8 +381,83 @@ class TradingBot:
         """Fetch real balance from exchange/chain and update risk manager"""
         # Ensure wallet_balances exists and is reset
         self.wallet_balances = []
+        self.latest_gas_fees = {} # Reset gas fees
         
         try:
+            # 0. WEB3 / DEX MODE (Priority if Web3 Wallet Connected)
+            if hasattr(self, 'web3_wallet') and self.web3_wallet.connected:
+                print(f"DEBUG: Syncing Web3 Wallet Balance ({self.web3_wallet.chain_id})")
+                native_bal = self.web3_wallet.get_balance()
+                
+                # Fetch Live Gas Fees
+                try:
+                    gas_info = self.web3_wallet.get_gas_price()
+                    if gas_info:
+                        self.latest_gas_fees = gas_info
+                        print(f"⛽ Live Gas Monitoring ({self.web3_wallet.get_network_name()}): {gas_info}")
+                except Exception as e:
+                    print(f"Error fetching gas fees: {e}")
+
+                # Get Chain Symbol
+                # Default mapping for known chain IDs to symbols
+                symbol_map = {
+                    'bitcoin': 'BTC',
+                    'litecoin': 'LTC',
+                    'dogecoin': 'DOGE',
+                    'tron': 'TRX',
+                    'solana': 'SOL',
+                    'cosmos': 'ATOM',
+                    'ton': 'TON',
+                    '1': 'ETH',
+                    'ethereum': 'ETH',
+                    '56': 'BNB',
+                    '137': 'MATIC',
+                    '43114': 'AVAX',
+                    '250': 'FTM',
+                    '10': 'OP',
+                    '42161': 'ETH'
+                }
+                
+                chain_sym = symbol_map.get(str(self.web3_wallet.chain_id), 'ETH')
+                
+                # If chain ID is numeric and not in map, try to get from CHAINS config
+                if chain_sym == 'ETH' and self.web3_wallet.chain_id in self.web3_wallet.CHAINS:
+                     chain_sym = self.web3_wallet.CHAINS[self.web3_wallet.chain_id]['symbol']
+                
+                # Update Risk Manager
+                # We need USD price of Native Token
+                pair_symbol = f"{chain_sym}/USDT"
+                price = 0.0
+                try:
+                    price = self.data_manager.get_current_price(pair_symbol)
+                    if not price or price == 0:
+                        # No hardcoded fallbacks - return 0 if price unavailable
+                        price = 0.0
+                except:
+                    # No price available - do not use hardcoded fake prices
+                    print(f"[WARN] Could not fetch price for {pair_symbol}. USD balance will be 0.")
+                    price = 0.0
+                
+                usd_bal = native_bal * price
+                self.risk_manager.update_live_balance(usd_bal)
+                
+                # Add to Wallet Balances for UI
+                self.wallet_balances.append({
+                    'asset': chain_sym,
+                    'total': native_bal,
+                    'free': native_bal,
+                    'locked': 0.0,
+                    'value_usd': usd_bal
+                })
+                
+                # If we have Jettons/Tokens in Web3Wallet (TODO: Implement token scan in Web3Wallet)
+                # For now, just Native.
+                
+                # If ONLY Web3 is connected (not CEX), return here.
+                # If CEX is ALSO connected, we continue to fetch CEX balance and append.
+                if not (self.trading_mode in ['CEX_Proxy', 'CEX_Direct']):
+                    return
+
             if self.trading_mode == 'DEX':
                 # Fetch Wallet Balance via DeFi Manager
                 if self.defi.account or (self.defi.current_chain == 'solana'):
@@ -260,6 +474,17 @@ class TradingBot:
                     # 3. Calculate USD Value
                     if price > 0:
                         usd_bal = native_bal * price
+                        
+                        # ADD VIRTUAL CREDIT (DEX)
+                        if hasattr(self, 'storage'):
+                            try:
+                                credit = float(self.storage.get_setting("virtual_usdt_credit_usd", 0.0) or 0.0)
+                                if credit > 0:
+                                     usd_bal += credit
+                                     # print(f"Applying Virtual Credit (DEX): ${credit}")
+                            except:
+                                pass
+                        
                         print(f"Synced DEX Balance: {native_bal:.4f} {native_symbol} (~${usd_bal:.2f})")
                         self.risk_manager.update_live_balance(usd_bal)
                     else:
@@ -274,11 +499,11 @@ class TradingBot:
             elif self.trading_mode in ['CEX_Proxy', 'CEX_Direct']:
                 print("DEBUG: Fetching balance from DataManager...")
                 
-                # Debug Log File
-                with open("debug_wallet_log.txt", "w", encoding='utf-8') as f:
-                    f.write(f"[{datetime.now()}] Starting Sync\n")
-                    if self.data_manager.offline_mode:
-                        f.write("WARNING: DataManager is in Offline Mode! Balance data is fake/mock.\n")
+                # Debug Log File - DISABLED for Performance
+                # with open("debug_wallet_log.txt", "w", encoding='utf-8') as f:
+                #    f.write(f"[{datetime.now()}] Starting Sync\n")
+                #    if self.data_manager.offline_mode:
+                #        f.write("WARNING: DataManager is in Offline Mode! Balance data is fake/mock.\n")
 
                 # 1. Fetch Default Balance (Unified/Spot)
                 try:
@@ -289,34 +514,34 @@ class TradingBot:
                          print("[WARN] Spot balance missing 'total' field. Retrying once...")
                          balance = self.data_manager.get_balance(force_refresh=True)
                          
-                    with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
-                        f.write(f"Spot Balance Keys: {list(balance.keys())}\n")
-                        # Log raw structure for debugging
-                        f.write(f"Raw Balance Type: {type(balance)}\n")
-                        if balance:
-                            f.write(f"Raw Balance Sample: {str(balance)[:500]}...\n")
+                    # with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                    #    f.write(f"Spot Balance Keys: {list(balance.keys())}\n")
+                    #    # Log raw structure for debugging
+                    #    f.write(f"Raw Balance Type: {type(balance)}\n")
+                    #    if balance:
+                    #        f.write(f"Raw Balance Sample: {str(balance)[:500]}...\n")
                         
-                        # DEBUG: Inspect specific assets requested by user
-                        target_assets = ['HMSTR', 'LDPEPE', 'PIXEL', 'SOL', 'USDT', 'BTC']
-                        f.write("\n--- Target Asset Inspection ---\n")
-                        for asset in target_assets:
-                            if asset in balance:
-                                f.write(f"Asset: {asset}\n")
-                                f.write(f"  Value: {balance[asset]}\n")
-                                f.write(f"  Type: {type(balance[asset])}\n")
-                            else:
-                                f.write(f"Asset: {asset} NOT FOUND in keys.\n")
-                        f.write("-----------------------------\n")
+                    #    # DEBUG: Inspect specific assets requested by user
+                    #    target_assets = ['HMSTR', 'LDPEPE', 'PIXEL', 'SOL', 'USDT', 'BTC']
+                    #    f.write("\n--- Target Asset Inspection ---\n")
+                    #    for asset in target_assets:
+                    #        if asset in balance:
+                    #            f.write(f"Asset: {asset}\n")
+                    #            f.write(f"  Value: {balance[asset]}\n")
+                    #            f.write(f"  Type: {type(balance[asset])}\n")
+                    #        else:
+                    #            f.write(f"Asset: {asset} NOT FOUND in keys.\n")
+                    #    f.write("-----------------------------\n")
 
-                        if 'total' in balance:
-                            f.write(f"Spot Total Dict found. Items: {len(balance['total'])}\n")
-                        else:
-                            f.write("Spot 'total' Dict NOT found.\n")
+                    #    if 'total' in balance:
+                    #        f.write(f"Spot Total Dict found. Items: {len(balance['total'])}\n")
+                    #    else:
+                    #        f.write("Spot 'total' Dict NOT found.\n")
                             
                 except Exception as e:
                     error_str = str(e)
-                    with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
-                        f.write(f"ERROR Fetching Spot: {error_str}\n")
+                    # with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
+                    #    f.write(f"ERROR Fetching Spot: {error_str}\n")
                     
                     # STRICT ERROR HANDLING: Check for Invalid API Key (-2008)
                     if "-2008" in error_str or "Invalid Api-Key ID" in error_str:
@@ -350,12 +575,26 @@ class TradingBot:
                             if amount and float(amount) > 0:
                                 # Check if already exists from Spot (to avoid duplicates or merge?)
                                 # Strategy: Add as separate entry with type 'Funding'
+                                # Calculate USD Value
+                                usd_val = 0.0
+                                if float(amount) > 0:
+                                    try:
+                                        if currency in ['USDT', 'USDC', 'BUSD', 'DAI']:
+                                            usd_val = float(amount)
+                                        else:
+                                            pair = f"{currency}/USDT"
+                                            price = self.data_manager.get_current_price(pair)
+                                            if price:
+                                                usd_val = float(amount) * price
+                                    except:
+                                        pass
+
                                 self.wallet_balances.append({
                                     'asset': currency,
                                     'free': float(funding_balance.get('free', {}).get(currency, 0)),
                                     'locked': float(funding_balance.get('used', {}).get(currency, 0)),
                                     'total': float(amount),
-                                    'value_usd': 0.0, # Will be calculated later
+                                    'value_usd': round(usd_val, 2),
                                     'source': 'Funding'
                                 })
                 except Exception as e:
@@ -399,11 +638,28 @@ class TradingBot:
                                 except:
                                     pass
 
+                                # Calculate USD Value
+                                usd_val = 0.0
+                                if float(amount) > 0:
+                                    try:
+                                        # Handle USDT/USDC directly
+                                        if currency in ['USDT', 'USDC', 'BUSD', 'DAI']:
+                                            usd_val = float(amount)
+                                        else:
+                                            # Try fetching price
+                                            pair = f"{currency}/USDT"
+                                            price = self.data_manager.get_current_price(pair)
+                                            if price:
+                                                usd_val = float(amount) * price
+                                    except:
+                                        pass
+
                                 self.wallet_balances.append({
                                     'asset': display_asset,
                                     'total': float(amount),
                                     'free': free_val,
-                                    'locked': locked_val
+                                    'locked': locked_val,
+                                    'value_usd': round(usd_val, 2)
                                 })
                         except Exception as e:
                              with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
@@ -424,11 +680,26 @@ class TradingBot:
                                 if currency.startswith('LD'):
                                     display_asset = f"{currency[2:]} (Earn)"
                                 
+                                # Calculate USD Value
+                                usd_val = 0.0
+                                if total > 0:
+                                    try:
+                                        if currency in ['USDT', 'USDC', 'BUSD', 'DAI']:
+                                            usd_val = total
+                                        else:
+                                            pair = f"{currency}/USDT"
+                                            price = self.data_manager.get_current_price(pair)
+                                            if price:
+                                                usd_val = total * price
+                                    except:
+                                        pass
+
                                 self.wallet_balances.append({
                                     'asset': display_asset,
                                     'total': total,
                                     'free': free,
-                                    'locked': used
+                                    'locked': used,
+                                    'value_usd': round(usd_val, 2)
                                 })
                         except Exception as e:
                              with open("debug_wallet_log.txt", "a", encoding='utf-8') as f:
@@ -453,11 +724,26 @@ class TradingBot:
                             if currency.startswith('LD'):
                                 display_asset = f"{currency[2:]} (Earn)"
                             
+                            # Calculate USD Value
+                            usd_val = 0.0
+                            if total > 0:
+                                try:
+                                    if currency in ['USDT', 'USDC', 'BUSD', 'DAI']:
+                                        usd_val = total
+                                    else:
+                                        pair = f"{currency}/USDT"
+                                        price = self.data_manager.get_current_price(pair)
+                                        if price:
+                                            usd_val = total * price
+                                except:
+                                    pass
+
                             self.wallet_balances.append({
                                 'asset': display_asset,
                                 'total': total,
                                 'free': float(data.get('free', 0.0)),
-                                'locked': float(data.get('used', 0.0))
+                                'locked': float(data.get('used', 0.0)),
+                                'value_usd': round(usd_val, 2)
                             })
                         except:
                             pass
@@ -483,11 +769,26 @@ class TradingBot:
                                 for c in coins:
                                     w_bal = float(c.get('walletBalance', 0))
                                     if w_bal > 0:
+                                        # Calculate USD Value
+                                        usd_val = 0.0
+                                        asset_sym = c.get('coin')
+                                        try:
+                                            if asset_sym in ['USDT', 'USDC', 'BUSD', 'DAI']:
+                                                usd_val = w_bal
+                                            else:
+                                                pair = f"{asset_sym}/USDT"
+                                                price = self.data_manager.get_current_price(pair)
+                                                if price:
+                                                    usd_val = w_bal * price
+                                        except:
+                                            pass
+
                                         self.wallet_balances.append({
-                                            'asset': c.get('coin'),
+                                            'asset': asset_sym,
                                             'total': w_bal,
                                             'free': float(c.get('availableToWithdraw', w_bal)),
-                                            'locked': float(c.get('locked', 0))
+                                            'locked': float(c.get('locked', 0)),
+                                            'value_usd': round(usd_val, 2)
                                         })
                     except Exception as parse_err:
                         print(f"Bybit raw balance parse failed: {parse_err}")
@@ -569,6 +870,38 @@ class TradingBot:
                         # Strict Mode: Stop sync on any failure as requested
                         raise Exception(f"Earn Wallet Sync Failed: {earn_e}")
 
+                # Add Fiat (NGN) Balance converted to USD
+                if hasattr(self, 'fiat') and self.fiat.fiat_balance > 0:
+                    ngn_bal = self.fiat.fiat_balance
+                    # Rate: NGN/USD ~ 1/1650 = 0.0006
+                    # We try to get USDT/NGN price from DataManager if possible
+                    rate_usdt_ngn = 1650.0 
+                    try:
+                        # Try fetch
+                        t = self.data_manager.get_current_price("USDT/NGN")
+                        if t and t > 0: rate_usdt_ngn = t
+                    except:
+                        pass
+                    
+                    usd_val_fiat = ngn_bal / rate_usdt_ngn
+                    
+                    # Add to Total Equity (since user wants to see it in Total Balance)
+                    usdt_bal += usd_val_fiat
+                    
+                    self.wallet_balances.append({
+                        'asset': 'NGN (Fiat)',
+                        'total': ngn_bal,
+                        'free': ngn_bal,
+                        'locked': 0.0,
+                        'value_usd': round(usd_val_fiat, 2)
+                    })
+
+                if hasattr(self, 'storage'):
+                    try:
+                        credit = float(self.storage.get_setting("virtual_usdt_credit_usd", 0.0) or 0.0)
+                        usdt_bal = usdt_bal + credit
+                    except Exception:
+                        pass
                 self.risk_manager.update_live_balance(usdt_bal)
                 print(f"Synced Live Balance ({self.trading_mode}): ${usdt_bal:.2f}")
                 
@@ -585,7 +918,11 @@ class TradingBot:
             raise e
 
     def set_strategy(self, strategy_name):
-        if strategy_name == "Meta-Allocator" or strategy_name in self.strategies:
+        # Alias mapping
+        if strategy_name == "Meta-Allocator":
+            strategy_name = "Profit Optimization Layer"
+            
+        if strategy_name == "Profit Optimization Layer" or strategy_name in self.strategies:
             self.active_strategy_name = strategy_name
             if strategy_name in self.strategies:
                 self.active_strategy = self.strategies[strategy_name]
@@ -619,6 +956,7 @@ class TradingBot:
             "type": clean_packet.get('bias', 'UNKNOWN'),
             "strategy": clean_packet.get('strategy', 'Unknown'),
             "entry": clean_packet.get('entry', 0),
+            "amount": clean_packet.get('position_size', 0),
             "stop_loss": clean_packet.get('stop_loss', 0),
             "take_profit": clean_packet.get('take_profit', 0),
             "risk_percent": clean_packet.get('risk_percent', 0),
@@ -836,7 +1174,8 @@ class TradingBot:
         strategy_to_run = self.active_strategy
         
         # Detect Regime for Allocation
-        regime_data = self.brain.detect_market_regime(df)
+        # Optimization: Pass df_features to avoid recalculating indicators in Brain
+        regime_data = self.brain.detect_market_regime(df_features)
         current_regime = regime_data.get('type', 'Unknown')
         
         allocation_weight = 1.0

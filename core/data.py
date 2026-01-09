@@ -332,9 +332,33 @@ class DataManager:
                 self.connection_error = None
                 print(f"[SUCCESS] Markets loaded for {self.exchange_id}")
             except Exception as e:
-                # RETRY LOGIC for Binance SAPI failures (often caused by permissions or IP blocks on SAPI endpoints)
+                err_str = str(e)
+                
+                # 1. Handle Invalid API Key (-2008) -> Fallback to Public Mode
+                # This prevents crashes when users have old/invalid keys stored
+                if "-2008" in err_str or "Invalid Api-Key ID" in err_str:
+                    print(f"[WARN] Invalid API Key detected for {self.exchange_id}. Clearing credentials and switching to Public Mode.")
+                    self.exchange.apiKey = None
+                    self.exchange.secret = None
+                    try:
+                        print(f"[INFO] Retrying load_markets in Public Mode...")
+                        # Disable fetchCurrencies for Binance in Public Mode as it requires auth
+                        if self.exchange_id == 'binance':
+                            self.exchange.options['fetchCurrencies'] = False
+                            
+                        self.exchange.load_markets()
+                        self.markets_loaded = True
+                        self.connection_status = "Connected (Public)"
+                        self.connection_error = None
+                        print(f"[SUCCESS] Markets loaded (Public Mode)")
+                        return
+                    except Exception as public_e:
+                        print(f"[ERROR] Public Mode retry failed: {public_e}")
+                        # Fall through to failure logic below
+
+                # 2. RETRY LOGIC for Binance SAPI failures (often caused by permissions or IP blocks on SAPI endpoints)
                 # We try to load markets in "Spot Only" mode by disabling fetchCurrencies (which calls sapi/v1/capital/config/getall)
-                if self.exchange_id == 'binance' and ("sapi" in str(e) or "config/getall" in str(e)):
+                if self.exchange_id == 'binance' and ("sapi" in err_str or "config/getall" in err_str):
                     print(f"[WARN] Failed to load markets with SAPI (Funding/Margin). Retrying with Spot only...")
                     try:
                         # Disable fetching currencies (which uses SAPI)

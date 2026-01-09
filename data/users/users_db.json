@@ -15,15 +15,53 @@
         "email": "wakzclin@gmail.com",
         "salt": "b93175750a5fcaffef3e58f7a759ab0d",
         "password_hash": "45abe7a0af9009e9061f6f148858f703a14f92d40794bf5bfc9d9fb6a56abbca",
-        "role": "demo",
+        "role": "admin",
         "2fa_enabled": false,
         "2fa_secret": null,
         "created_at": "2025-12-28 17:19:50.486910",
-        "last_login": "2026-01-05 00:10:14.122109",
+        "last_login": "2026-01-08 01:43:10.809477",
         "settings": {
             "theme": "dark",
             "notifications_enabled": true
         },
-        "api_keys": {}
+        "api_keys": {
+            "binance": {
+                "api_key": "3MmGYZOzWqWD8IQZB9pOoCZlT4eSLG0RwBC8U2jqQEjQ7EpvtyuIwBhTQ0n9ESoS",
+                "api_secret": "etIg4wOuIQho8DVI4CKv0PGYqALJEr0Ul3fQN50GbLkxDH0oicNJOfDdA2JEAMDv"
+            },
+            "flutterwave": {
+                "api_key": "FLWPUBK-aded1251ab1fccfd69b058608f38f7a8-X",
+                "api_secret": "FLWSECK-2d9e29e2c7e85214e55fa642cff59b99-19b9abc3310vt-X",
+                "encryption_key": "2d9e29e2c7e8eaa49db18d1b"
+            }
+        }
+    },
+    "test_user_live": {
+        "email": "test@example.com",
+        "salt": "1f0a29c2756656af9db3dd68375db7b6",
+        "password_hash": "4f4914c521c8a2b3e43b4c87b65703e3dd65b7dbddd35a761b6364228adb9c68",
+        "role": "demo",
+        "2fa_enabled": false,
+        "2fa_secret": null,
+        "created_at": "2026-01-07 22:10:09.976458",
+        "last_login": null,
+        "settings": {
+            "theme": "dark",
+            "notifications_enabled": true
+        },
+        "api_keys": {
+            "binance": {
+                "api_key": "enc_aes_gAAAAABpXszvvzwUZClkbUaAIR_L6tjCurg_JQ4BXPcz_-fHJ35R_8QzlG2NUPslD5Wm6omhExNCEhbQTwrOCfE3KyMCoZVrg3TZF-mfx_206nTIE_11TBc=",
+                "api_secret": "enc_aes_gAAAAABpXszv8JkHpVctHhyAQd-ZW3ydnNXkDZJQky3lBoB0Pl_fySLdAdpNnVLwEU-LCvl-3LeJ2uajTXONUqyvSYOtKBCpkR-RMD40jJBYWmx3lWtIYHM="
+            }
+        },
+        "wallets": [
+            {
+                "address": "0x1234567890abcdef1234567890abcdef12345678",
+                "private_key": "enc_aes_gAAAAABpXszvRZcN-WPYMmpaqRLI9heMzUt2VLLThTFokju-Nzx-BE3ZFKVzTeBQRWCxPA0Fj6mwNLJ647I37KN07ZyC9HOUTqoV09MjoTpAQu5vbhYSBJs_SKI1w0KTcJl_fLTzm1FiGMl1M4-MKp-NV8D4Ay_8vJMyuy2XAA8PgoCy4wikcz4=",
+                "chain_id": "1",
+                "type": "web3"
+            }
+        ]
     }
 }
