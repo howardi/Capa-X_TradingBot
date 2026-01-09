@@ -133,6 +133,28 @@ class FiatManager:
         if self.fiat_balance < amount:
             return {"status": "error", "message": "Insufficient NGN Balance (Bot Ledger)"}
 
+        # --- SIMULATION MODE CHECK ---
+        trading_mode = os.environ.get("TRADING_MODE", "Demo")
+        if trading_mode == "Demo":
+            print(f"ℹ️ [Demo Mode] Simulating Withdrawal of ₦{amount}...")
+            # Simulate Success
+            self.fiat_balance -= amount
+            
+            # Persist
+            if hasattr(self.bot, 'storage'):
+                self.bot.storage.save_setting("fiat_balance_ngn", self.fiat_balance)
+                self.bot.storage.save_fiat_transaction(
+                    f"sim_with_{int(time.time())}", 'withdrawal', amount, 'NGN', 'success', 
+                    details={"mode": "demo", "bank": bank_code, "account": account_number}
+                )
+            
+            return {
+                "status": "success", 
+                "message": "Withdrawal Successful (Demo Mode)", 
+                "reference": f"sim_with_{int(time.time())}",
+                "amount": amount
+            }
+
         # Check Real Flutterwave Balance (Proactive Check)
         try:
             balances = self.get_balances()

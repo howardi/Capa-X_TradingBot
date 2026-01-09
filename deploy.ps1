@@ -66,7 +66,8 @@ $ENV_VARS = "PYTHONUNBUFFERED=1," + `
             "GCS_BUCKET_NAME=$BUCKET_NAME," + `
             "FLUTTERWAVE_PUBLIC_KEY=FLWPUBK-aded1251ab1fccfd69b058608f38f7a8-X," + `
             "FLUTTERWAVE_SECRET_KEY=FLWSECK-2d9e29e2c7e85214e55fa642cff59b99-19b9abc3310vt-X," + `
-            "FLUTTERWAVE_ENCRYPTION_KEY=2d9e29e2c7e8eaa49db18d1b"
+            "FLUTTERWAVE_ENCRYPTION_KEY=2d9e29e2c7e8eaa49db18d1b," + `
+            "TRADING_MODE=Demo"
 
 gcloud run deploy $SERVICE_NAME `
   --image gcr.io/$PROJECT_ID/$SERVICE_NAME `
