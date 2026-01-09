@@ -56,14 +56,87 @@ class Web3Wallet:
             {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "type": "function"}
         ]
 
-    def add_custom_chain(self, chain_id, rpc_url, name, symbol, chain_type='evm'):
-        """Dynamically add a new network configuration"""
-        self.CHAINS[str(chain_id)] = {
-            'name': name,
-            'rpc': rpc_url,
-            'symbol': symbol,
-            'type': chain_type
-        }
+    def send_token(self, token_address, to_address, amount, decimals=18):
+        """
+        Send ERC20 Token.
+        """
+        if self.mode != 'read_write' or not self.private_key:
+             return {"status": "error", "message": "Wallet in Read-Only mode. Cannot sign transaction."}
+
+        try:
+            # 1. Setup Contract
+            contract = self.w3.eth.contract(address=self.w3.to_checksum_address(token_address), abi=self.ERC20_ABI)
+            
+            # 2. Build Transaction
+            nonce = self.w3.eth.get_transaction_count(self.address)
+            amount_wei = int(amount * (10 ** decimals))
+            
+            # Estimate Gas
+            # Simple transfer usually 60k gas limit safe
+            gas_price = self.w3.eth.gas_price
+            
+            # Encode Transfer
+            # Function: transfer(address,uint256)
+            # We can use build_transaction if we have full ABI, but here we have minimal.
+            # Let's trust web3 to build it if function exists.
+            
+            tx = contract.functions.transfer(
+                self.w3.to_checksum_address(to_address),
+                amount_wei
+            ).build_transaction({
+                'chainId': int(self.chain_id),
+                'gas': 100000,
+                'gasPrice': gas_price,
+                'nonce': nonce,
+            })
+            
+            # 3. Sign
+            signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
+            
+            # 4. Send
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            return {
+                "status": "success",
+                "tx_hash": self.w3.to_hex(tx_hash),
+                "message": f"Sent {amount} tokens to {to_address}"
+            }
+            
+        except Exception as e:
+            logging.error(f"Web3 Send Error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def send_native(self, to_address, amount):
+        """
+        Send Native Coin (ETH, BNB, MATIC).
+        """
+        if self.mode != 'read_write' or not self.private_key:
+             return {"status": "error", "message": "Wallet in Read-Only mode."}
+             
+        try:
+            nonce = self.w3.eth.get_transaction_count(self.address)
+            gas_price = self.w3.eth.gas_price
+            
+            tx = {
+                'nonce': nonce,
+                'to': self.w3.to_checksum_address(to_address),
+                'value': self.w3.to_wei(amount, 'ether'),
+                'gas': 21000,
+                'gasPrice': gas_price,
+                'chainId': int(self.chain_id)
+            }
+            
+            signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            return {
+                "status": "success", 
+                "tx_hash": self.w3.to_hex(tx_hash),
+                "message": f"Sent {amount} native coins to {to_address}"
+            }
+            
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     def is_connected(self):
         return self.connected

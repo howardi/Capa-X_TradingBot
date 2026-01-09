@@ -628,12 +628,40 @@ class DataManager:
             return []
 
     def create_order(self, symbol, type, side, amount, price=None):
+        if self.connection_status == "Disconnected" or not self.exchange:
+            return {"status": "Failed", "error": "Exchange Disconnected"}
+            
         try:
-            self.ensure_markets_loaded()
-            return self.exchange.create_order(symbol, type, side, amount, price)
+            order = self.exchange.create_order(symbol, type, side, amount, price)
+            return order
         except Exception as e:
-            print(f"Error creating order: {e}")
-            raise e
+            return {"status": "Failed", "error": str(e)}
+
+    def withdraw_crypto(self, code: str, amount: float, address: str, tag: str = None, network: str = None) -> Dict:
+        """
+        Withdraw Crypto from CEX (Binance/Bybit).
+        """
+        if not self.exchange:
+            return {"status": "error", "message": "Exchange not initialized"}
+            
+        if not self.exchange.check_required_credentials():
+             return {"status": "error", "message": "API Keys missing"}
+             
+        try:
+            params = {}
+            if network:
+                params['network'] = network
+                
+            result = self.exchange.withdraw(code, amount, address, tag, params)
+            return {
+                "status": "success",
+                "tx_id": result.get('id') or result.get('txid'),
+                "message": f"Withdrawal of {amount} {code} initiated.",
+                "details": result
+            }
+        except Exception as e:
+            logging.error(f"Withdrawal Error: {e}")
+            return {"status": "error", "message": str(e)}
 
     def fetch_order_book(self, symbol: str, limit: int = 20) -> dict:
         """Fetch current order book (depth)"""

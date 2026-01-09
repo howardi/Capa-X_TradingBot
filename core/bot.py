@@ -186,6 +186,38 @@ class TradingBot:
         if hasattr(self, 'fiat'):
              self.fiat.initialize_adapter(username)
 
+    def withdraw_crypto(self, asset: str, amount: float, address: str, network: str = None):
+        """
+        Initiate Crypto Withdrawal (CEX or Web3).
+        Prioritizes CEX if mode is CEX_Direct/Proxy.
+        """
+        print(f"💸 Initiating Withdrawal: {amount} {asset} -> {address}")
+        
+        # 1. CEX Withdrawal
+        if self.trading_mode in ['CEX_Direct', 'CEX_Proxy']:
+            return self.data_manager.withdraw_crypto(asset, amount, address, network=network)
+            
+        # 2. Web3 Withdrawal
+        elif self.trading_mode == 'DEX' or (hasattr(self, 'web3_wallet') and self.web3_wallet.is_connected()):
+            # Detect if Native or Token
+            if asset in ['ETH', 'BNB', 'MATIC', 'AVAX']:
+                return self.web3_wallet.send_native(address, amount)
+            else:
+                # Need Token Address - For MVP, require manual input or config lookup
+                # This is a simplification. In prod, use a Token Map.
+                token_map = {
+                    'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7', # ETH Mainnet
+                    # Add more dynamic lookup
+                }
+                token_addr = token_map.get(asset)
+                if not token_addr:
+                    return {"status": "error", "message": f"Token Address for {asset} not found. Use raw address."}
+                
+                return self.web3_wallet.send_token(token_addr, address, amount)
+        
+        else:
+            return {"status": "error", "message": "No active withdrawal method found (CEX or Web3 Disconnected)"}
+
     def sync_live_balance(self):
         """
         Fetch real balance from connected Exchange/Wallet and update Risk Manager.
