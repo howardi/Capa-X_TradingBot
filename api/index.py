@@ -1,387 +1,221 @@
-from flask import Flask, jsonify, render_template, request, redirect, make_response
+from flask import Flask, jsonify, render_template, request, redirect, make_response, send_from_directory
 import json
 import os
 import requests
 import traceback
 import time
 import random
+import ccxt
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Robust template folder resolution for Vercel
-template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'templates'))
-app = Flask(__name__, template_folder=template_dir, static_folder='static')
+# Load Environment Variables
+load_dotenv()
 
-def get_price(symbol='BTCUSDT'):
-    symbol = symbol.upper()
+# Configuration
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIST = os.path.join(BASE_DIR, 'frontend', 'dist')
+
+# API Keys
+BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
+BINANCE_SECRET = os.getenv('BINANCE_SECRET')
+FLUTTERWAVE_SECRET_KEY = os.getenv('FLUTTERWAVE_SECRET_KEY')
+
+app = Flask(__name__, static_folder=str(FRONTEND_DIST), static_url_path='')
+
+# Initialize Exchange (Binance)
+exchange = None
+try:
+    if BINANCE_API_KEY and BINANCE_SECRET:
+        exchange = ccxt.binance({
+            'apiKey': BINANCE_API_KEY,
+            'secret': BINANCE_SECRET,
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'} 
+        })
+        print("✅ Binance Authenticated")
+    else:
+        print("⚠️ Binance API Keys missing. Using public mode.")
+        exchange = ccxt.binance({'enableRateLimit': True})
+except Exception as e:
+    print(f"❌ Exchange Init Error: {e}")
+    exchange = ccxt.binance({'enableRateLimit': True})
+
+# --- Helper Functions ---
+
+def get_flutterwave_balance():
+    """Fetch NGN balance from Flutterwave if configured."""
+    if not FLUTTERWAVE_SECRET_KEY:
+        return 0.0
     
-    # 1. Try Binance.com
-    for i in range(2):
-        try:
-            url = f'https://api.binance.com/api/v3/ticker/price?symbol={symbol}'
-            response = requests.get(url, timeout=2)
-            response.raise_for_status()
-            data = response.json()
-            return float(data['price'])
-        except:
-            time.sleep(0.1)
-
-    # 2. Try Binance.US (Good for US servers)
     try:
-        url = f'https://api.binance.us/api/v3/ticker/price?symbol={symbol}'
-        response = requests.get(url, timeout=2)
-        response.raise_for_status()
-        data = response.json()
-        return float(data['price'])
-    except:
-        pass
-
-    # 3. Try CoinGecko (Mapping needed)
-    try:
-        cg_map = {'BTCUSDT': 'bitcoin', 'ETHUSDT': 'ethereum', 'BNBUSDT': 'binancecoin'}
-        cg_id = cg_map.get(symbol)
-        if cg_id:
-            url = f'https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd'
-            response = requests.get(url, timeout=2)
-            response.raise_for_status()
-            data = response.json()
-            if cg_id in data and 'usd' in data[cg_id]:
-                return float(data[cg_id]['usd'])
-    except:
-        pass
-
-    # 4. Try Kraken (Mapping needed)
-    try:
-        k_map = {'BTCUSDT': 'XBTUSD', 'ETHUSDT': 'ETHUSD'}
-        pair = k_map.get(symbol)
-        if pair:
-            url = f'https://api.kraken.com/0/public/Ticker?pair={pair}'
-            response = requests.get(url, timeout=2)
-            response.raise_for_status()
-            data = response.json()
-            if 'result' in data:
-                # Kraken returns a dictionary with the pair name as key (which might differ slightly from request)
-                # We iterate to find the first key
-                key = list(data['result'].keys())[0]
-                # 'c' is the last trade closed array, first element is price
-                return float(data['result'][key]['c'][0])
-    except:
-        pass
-
-    # 5. Last Resort Fallback (Mock Data for Vercel Demo)
-    # Prevents auto-trader from seeing 0.0 and panic closing positions
-    if 'BTC' in symbol: return 65000.00
-    if 'ETH' in symbol: return 3500.00
-    if 'BNB' in symbol: return 600.00
-    if 'SOL' in symbol: return 150.00
-    
-    return 100.00 # Generic fallback
-
-# Helper to get Bitcoin Price (Lightweight)
-def get_btc_price():
-    return get_price('BTCUSDT')
-
-def get_exchange_health():
-    results = []
-    try:
-        import time
-        start = time.perf_counter()
-        r = requests.get('https://api.binance.com/api/v3/ping', timeout=2)
-        latency = int((time.perf_counter() - start) * 1000)
-        results.append({"name": "Binance", "status": "ok" if r.status_code == 200 else "maintenance", "latency_ms": latency})
-    except:
-        results.append({"name": "Binance", "status": "maintenance", "latency_ms": None})
-    try:
-        import time
-        start = time.perf_counter()
-        r = requests.get('https://api.bitfinex.com/v2/platform/status', timeout=2)
-        latency = int((time.perf_counter() - start) * 1000)
-        s = "ok"
-        try:
-            arr = r.json()
-            s = "ok" if isinstance(arr, list) and len(arr) > 0 and arr[0] == 1 else "maintenance"
-        except:
-            s = "maintenance"
-        results.append({"name": "Bitfinex", "status": s if r.status_code == 200 else "maintenance", "latency_ms": latency})
-    except:
-        results.append({"name": "Bitfinex", "status": "maintenance", "latency_ms": None})
-    try:
-        import time
-        start = time.perf_counter()
-        r = requests.get('https://api.kraken.com/0/public/SystemStatus', timeout=2)
-        latency = int((time.perf_counter() - start) * 1000)
-        s = "maintenance"
-        try:
-            data = r.json()
-            status_raw = data.get('result', {}).get('status')
-            s = "ok" if status_raw == 'online' else "maintenance"
-        except:
-            s = "maintenance"
-        results.append({"name": "Kraken", "status": s if r.status_code == 200 else "maintenance", "latency_ms": latency})
-    except:
-        results.append({"name": "Kraken", "status": "maintenance", "latency_ms": None})
-    try:
-        import time
-        start = time.perf_counter()
-        r = requests.get('https://api.toobit.com/api/v1/ping', timeout=2)
-        latency = int((time.perf_counter() - start) * 1000)
-        results.append({"name": "Toobit", "status": "ok" if r.status_code == 200 else "maintenance", "latency_ms": latency})
-    except:
-        results.append({"name": "Toobit", "status": "maintenance", "latency_ms": None})
-    try:
-        import time
-        start = time.perf_counter()
-        r = requests.get('https://api.hashkey.global/api/v1/ping', timeout=2)
-        latency = int((time.perf_counter() - start) * 1000)
-        results.append({"name": "HashKey", "status": "ok" if r.status_code == 200 else "maintenance", "latency_ms": latency})
-    except:
-        results.append({"name": "HashKey", "status": "maintenance", "latency_ms": None})
-    return results
-
-@app.route('/')
-def index():
-    try:
-        # Check for simple auth cookie
-        auth = request.cookies.get('capax_auth')
-        if auth == 'verified':
-            return redirect('/dashboard')
-        btc_price = get_btc_price()
-        status_payload = {
-            "status": "online",
-            "service": "CapacityBay Lite Monitor",
-            "environment": "Vercel Serverless",
-            "timestamp": datetime.utcnow().isoformat()
+        headers = {
+            "Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}",
+            "Content-Type": "application/json"
         }
-        return render_template(
-            'status.html',
-            btc_price=btc_price,
-            status=status_payload,
-            server_time=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
-            exchange_health=get_exchange_health()
-        )
-    except Exception:
-        return f"<pre>Error in Index: {traceback.format_exc()}</pre>", 500
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    try:
-        if request.method == 'POST':
-            password = request.form.get('password')
-            # Simple hardcoded check for Lite mode
-            if password == 'admin':
-                resp = make_response(redirect('/dashboard'))
-                resp.set_cookie('capax_auth', 'verified', max_age=3600*24)
-                return resp
-            else:
-                return render_template('login.html', error="Invalid Access Code")
-        return render_template('login.html')
-    except Exception:
-        return f"<pre>Error in Login: {traceback.format_exc()}</pre>", 500
-
-@app.route('/logout')
-def logout():
-    resp = make_response(redirect('/login'))
-    resp.set_cookie('capax_auth', '', expires=0)
-    return resp
-
-@app.route('/dashboard')
-def dashboard():
-    try:
-        # Simple Auth Check
-        auth = request.cookies.get('capax_auth')
-        if auth != 'verified':
-            return redirect('/login')
-
-        # Fetch lightweight data for the dashboard
-        btc_price = get_btc_price()
+        # Fetch all balances
+        url = "https://api.flutterwave.com/v3/balances"
+        response = requests.get(url, headers=headers, timeout=5)
         
-        # Read Mock/Repo Data for Trade History
-        trades = []
-        try:
-            # Try multiple paths to be safe on Vercel
-            base_dir = os.path.dirname(os.path.dirname(__file__)) # Up one level from api/
-            trade_path = os.path.join(base_dir, 'data', 'users', 'howardino', 'trade_history.json')
-            
-            if os.path.exists(trade_path):
-                with open(trade_path, 'r') as f:
-                    trades = json.load(f)
-                    trades.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-                    trades = trades[:5]
-        except Exception as e:
-            print(f"Error reading trades: {e}")
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success':
+                # Find NGN wallet
+                for wallet in data.get('data', []):
+                    if wallet.get('currency') == 'NGN':
+                        return float(wallet.get('available_balance', 0.0))
+    except Exception as e:
+        print(f"Flutterwave Error: {e}")
+    return 0.0
 
-        return render_template('dashboard.html', 
-                               btc_price=btc_price, 
-                               trades=trades,
-                               server_time=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'))
-    except Exception:
-        return f"<pre>Error in Dashboard: {traceback.format_exc()}</pre>", 500
+# --- API Endpoints ---
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/status')
 def api_status():
     return jsonify({
         "status": "online",
-        "service": "CapacityBay Lite Monitor",
-        "environment": "Vercel Serverless",
-        "timestamp": datetime.utcnow().isoformat()
+        "service": "CapaRox Trading Bot",
+        "timestamp": datetime.utcnow().isoformat(),
+        "authenticated": exchange.checkRequiredCredentials() if exchange else False
     })
 
-@app.route('/status')
-def status_page():
-    try:
-        btc_price = get_btc_price()
-        status_payload = {
-            "status": "online",
-            "service": "CapacityBay Lite Monitor",
-            "environment": "Vercel Serverless",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-        return render_template(
-            'status.html',
-            btc_price=btc_price,
-            status=status_payload,
-            server_time=datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
-            exchange_health=get_exchange_health()
-        )
-    except Exception:
-        return f"<pre>Error in Status: {traceback.format_exc()}</pre>", 500
+@app.route('/api/balance')
+def api_balance():
+    """Fetch aggregated balances (USDT from Binance, NGN from Flutterwave)."""
+    balances = {
+        "USDT": 0.0,
+        "NGN": 0.0,
+        "BTC": 0.0,
+        "ETH": 0.0
+    }
+    
+    # 1. Fetch Crypto Balances (Binance)
+    if exchange and exchange.checkRequiredCredentials():
+        try:
+            balance_data = exchange.fetch_balance()
+            balances["USDT"] = float(balance_data.get('USDT', {}).get('free', 0.0))
+            balances["BTC"] = float(balance_data.get('BTC', {}).get('free', 0.0))
+            balances["ETH"] = float(balance_data.get('ETH', {}).get('free', 0.0))
+        except Exception as e:
+            print(f"Binance Balance Error: {e}")
+    
+    # 2. Fetch Fiat Balance (Flutterwave)
+    balances["NGN"] = get_flutterwave_balance()
+    
+    return jsonify(balances)
 
-@app.route('/api/analyze')
-def api_analyze():
-    try:
-        timeframe = request.args.get('timeframe', '1h')
-        price = get_btc_price()
-        
-        # Simple Mock Logic sensitive to price to seem "real"
-        # In Docker mode, this would call the actual ML model
-        signal = "NEUTRAL"
-        if price > 0:
-            # Create a pseudo-random determination based on price + timeframe string hash
-            # This ensures consistent results for same price/timeframe but variety across them
-            seed = int(price) + sum(ord(c) for c in timeframe)
-            if seed % 3 == 0:
-                signal = "BUY"
-            elif seed % 3 == 1:
-                signal = "SELL"
-            else:
-                signal = "NEUTRAL"
-        
-        return jsonify({
-            "symbol": "BTC/USDT",
-            "timeframe": timeframe,
-            "price": price,
-            "signal": signal,
-            "confidence": "Demo Mode (Lite)",
-            "note": f"Analysis based on {timeframe} candles. Deploy Docker for full ML."
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route('/api/trade', methods=['POST'])
+def api_trade():
+    """Execute a trade on Binance."""
+    if not exchange or not exchange.checkRequiredCredentials():
+        return jsonify({"error": "Exchange not authenticated. Check API keys."}), 401
 
-@app.route('/api/price')
-def api_price():
     try:
-        symbol = request.args.get('symbol', 'BTCUSDT')
-        price = get_price(symbol)
+        data = request.json
+        symbol = data.get('symbol', 'BTC/USDT').replace('/', '') # Ensure format BTCUSDT
+        side = data.get('side', '').lower() # buy or sell
+        amount = float(data.get('amount', 0))
+        price = float(data.get('price', 0))
+        type = data.get('type', 'limit').lower()
+        
+        if side not in ['buy', 'sell']:
+            return jsonify({"error": "Invalid side"}), 400
+            
+        if amount <= 0:
+            return jsonify({"error": "Invalid amount"}), 400
+
+        # Create Order
+        if type == 'market':
+            order = exchange.create_order(symbol, 'market', side, amount)
+        else:
+            if price <= 0:
+                return jsonify({"error": "Price required for limit order"}), 400
+            order = exchange.create_order(symbol, 'limit', side, amount, price)
+            
         return jsonify({
-            "symbol": symbol,
-            "price": price,
-            "timestamp": datetime.utcnow().isoformat()
+            "status": "success",
+            "orderId": order.get('id'),
+            "filled": order.get('filled'),
+            "price": order.get('price', price)
         })
+        
     except Exception as e:
+        print(f"Trade Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/candles')
 def api_candles():
     try:
-        symbol = request.args.get('symbol', 'BTCUSDT').upper()
+        symbol = request.args.get('symbol', 'BTC/USDT')
         timeframe = request.args.get('timeframe', '1h')
-        limit = request.args.get('limit', '100')
+        limit = int(request.args.get('limit', '100'))
         
-        # Map timeframe to Binance interval
-        # 30s is not standard, fallback to 1m
-        interval_map = {
-            '30s': '1m', '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
-            '1h': '1h', '4h': '4h', '1d': '1d'
-        }
-        interval = interval_map.get(timeframe, '1h')
+        # CCXT handles timeframe mapping automatically
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         
-        # Fetch from Binance
-        url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
-        
-        # Try Binance.US if .com fails (simple fallback)
-        try:
-            r = requests.get(url, timeout=3)
-            r.raise_for_status()
-            data = r.json()
-        except:
-            url = f'https://api.binance.us/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
-            r = requests.get(url, timeout=3)
-            r.raise_for_status()
-            data = r.json()
-
-        # Format for Lightweight Charts: { time: 1234567890, open: 1, high: 2, low: 0.5, close: 1.5 }
         candles = []
-        for d in data:
-            # Binance time is ms, Lightweight Charts expects seconds for UNIX timestamp
+        for candle in ohlcv:
             candles.append({
-                'time': int(d[0] / 1000), 
-                'open': float(d[1]),
-                'high': float(d[2]),
-                'low': float(d[3]),
-                'close': float(d[4])
+                'time': int(candle[0] / 1000), 
+                'open': candle[1],
+                'high': candle[2],
+                'low': candle[3],
+                'close': candle[4]
             })
             
-        # Fallback to Mock Data if API failed or returned empty (common on Vercel due to IP blocks)
-        if not candles:
-            current_price = get_price(symbol)
-            if current_price == 0: 
-                # Last resort fallback prices
-                if 'BTC' in symbol: current_price = 65000
-                elif 'ETH' in symbol: current_price = 3500
-                else: current_price = 100
-
-            # Determine seconds per candle
-            seconds_map = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400}
-            step = seconds_map.get(interval, 3600)
-            
-            # Generate walk backwards
-            mock_data = []
-            curr = current_price
-            now = int(time.time())
-            
-            # Round to nearest step
-            now = now - (now % step)
-
-            for i in range(int(limit)):
-                ts = now - (i * step)
-                # Random walk logic
-                volatility = 0.002 # 0.2% per candle
-                change = curr * (random.uniform(-volatility, volatility))
-                
-                open_p = curr - change
-                close_p = curr
-                high_p = max(open_p, close_p) * (1 + random.uniform(0, volatility/2))
-                low_p = min(open_p, close_p) * (1 - random.uniform(0, volatility/2))
-                
-                mock_data.append({
-                    'time': ts,
-                    'open': open_p,
-                    'high': high_p,
-                    'low': low_p,
-                    'close': close_p
-                })
-                
-                curr = open_p # Next candle's close is this candle's open (walking backwards)
-            
-            candles = sorted(mock_data, key=lambda x: x['time'])
-
         return jsonify(candles)
     except Exception as e:
-        # Fallback empty response rather than 500 to avoid breaking UI
+        print(f"Candle Error: {e}")
         return jsonify([])
 
-@app.route('/api/exchange-health')
-def api_exchange_health():
+@app.route('/api/orderbook')
+def api_orderbook():
     try:
-        return jsonify({"exchanges": get_exchange_health(), "timestamp": datetime.utcnow().isoformat()})
+        symbol = request.args.get('symbol', 'BTC/USDT')
+        orderbook = exchange.fetch_order_book(symbol, limit=10)
+        
+        return jsonify({
+            "bids": [{"price": x[0], "amount": x[1]} for x in orderbook['bids']],
+            "asks": [{"price": x[0], "amount": x[1]} for x in orderbook['asks']]
+        })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # Fallback Mock
+        return jsonify({
+            "bids": [{"price": 64000, "amount": 0.5}],
+            "asks": [{"price": 64050, "amount": 0.3}]
+        })
+
+@app.route('/api/trades')
+def api_trades():
+    try:
+        symbol = request.args.get('symbol', 'BTC/USDT')
+        # Fetch public trades from exchange
+        trades_data = exchange.fetch_trades(symbol, limit=20)
+        
+        trades = []
+        for t in trades_data:
+            trades.append({
+                "symbol": t['symbol'],
+                "side": t['side'],
+                "amount": t['amount'],
+                "price": t['price'],
+                "timestamp": t['timestamp']
+            })
+            
+        # Sort by latest
+        trades.sort(key=lambda x: x['timestamp'], reverse=True)
+        return jsonify(trades)
+    except Exception as e:
+        return jsonify([])
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 8080))
+    app.run(debug=True, host='0.0.0.0', port=port)

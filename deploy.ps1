@@ -1,13 +1,13 @@
-Write-Host "🚀 Preparing for Google Cloud Run Deployment..." -ForegroundColor Cyan
+Write-Host "Preparing for Google Cloud Run Deployment..." -ForegroundColor Cyan
 
 # Check for gcloud in PATH
 if (-not (Get-Command "gcloud" -ErrorAction SilentlyContinue)) {
     $GCLOUD_PATH = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin"
     if (Test-Path "$GCLOUD_PATH\gcloud.cmd") {
-        Write-Host "⚠️  gcloud not found in PATH. Adding $GCLOUD_PATH temporarily..." -ForegroundColor Yellow
+        Write-Host "gcloud not found in PATH. Adding $GCLOUD_PATH temporarily..." -ForegroundColor Yellow
         $env:PATH = "$env:PATH;$GCLOUD_PATH"
     } else {
-        Write-Host "❌ gcloud not found. Please restart your terminal if you just installed it." -ForegroundColor Red
+        Write-Host "gcloud not found. Please restart your terminal if you just installed it." -ForegroundColor Red
         exit 1
     }
 }
@@ -15,13 +15,13 @@ if (-not (Get-Command "gcloud" -ErrorAction SilentlyContinue)) {
 # Check Auth
 $AUTH_LIST = gcloud auth list --format="value(account)" 2>$null
 if (-not $AUTH_LIST) {
-    Write-Host "⚠️  You are not authenticated with Google Cloud." -ForegroundColor Yellow
-    Write-Host "👉 Running 'gcloud auth login'..." -ForegroundColor Cyan
+    Write-Host "You are not authenticated with Google Cloud." -ForegroundColor Yellow
+    Write-Host "Running 'gcloud auth login'..." -ForegroundColor Cyan
     gcloud auth login
 }
 
 # 1. Auto-detect Project ID
-Write-Host "🔍 Detecting Google Cloud Project..." -ForegroundColor Yellow
+Write-Host "Detecting Google Cloud Project..." -ForegroundColor Yellow
 $PROJECT_ID = ""
 $raw_project = gcloud config get-value project 2>$null
 if (-not [string]::IsNullOrWhiteSpace($raw_project)) {
@@ -44,11 +44,11 @@ if ([string]::IsNullOrWhiteSpace($PROJECT_ID)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($PROJECT_ID)) {
-    Write-Host "❌ ERROR: No Project ID provided. Exiting." -ForegroundColor Red
+    Write-Host "ERROR: No Project ID provided. Exiting." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "✅ Using Project ID: $PROJECT_ID" -ForegroundColor Green
+Write-Host "Using Project ID: $PROJECT_ID" -ForegroundColor Green
 
 # Set Project explicitly to avoid future errors
 gcloud config set project $PROJECT_ID
@@ -58,15 +58,15 @@ $SERVICE_NAME = "caparox-bot"
 $BUCKET_NAME = "${PROJECT_ID}-data"
 
 # 2. Enable APIs
-Write-Host "🛠 Enabling necessary APIs (Cloud Build, Cloud Run)..." -ForegroundColor Yellow
-gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project $PROJECT_ID
+Write-Host "Enabling necessary APIs (Cloud Build, Cloud Run)..." -ForegroundColor Yellow
+gcloud services enable cloudbuild.googleapis.com run.googleapis.com --project $PROJECT_ID --quiet
 
 # 3. Build
-Write-Host "📦 Building Docker image..." -ForegroundColor Yellow
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME --project $PROJECT_ID
+Write-Host "Building Docker image..." -ForegroundColor Yellow
+gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME --project $PROJECT_ID --quiet
 
 # 4. Deploy
-Write-Host "🚀 Deploying to Cloud Run..." -ForegroundColor Yellow
+Write-Host "Deploying to Cloud Run..." -ForegroundColor Yellow
 # Hardcoded Keys for Cloud Run Environment
 $ENV_VARS = "PYTHONUNBUFFERED=1," + `
             "GOOGLE_CLOUD_PROJECT=$PROJECT_ID," + `
@@ -89,7 +89,8 @@ gcloud run deploy $SERVICE_NAME `
   --allow-unauthenticated `
   --set-env-vars $ENV_VARS `
   --memory 2Gi `
-  --cpu 2
+  --cpu 2 `
+  --quiet
 
-Write-Host "✅ Deployment complete!" -ForegroundColor Green
+Write-Host "Deployment complete!" -ForegroundColor Green
 # Read-Host "Press Enter to exit..."
