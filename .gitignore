@@ -17,3 +17,4 @@ secret.key
 tunnel_info.json
 debug_*.txt
 *.pem
+gcp_key.json

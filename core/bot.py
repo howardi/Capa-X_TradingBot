@@ -5,30 +5,10 @@ import core.dns_fix
 from datetime import datetime
 import pandas as pd
 from core.data import DataManager
-from core.analysis import TechnicalAnalysis
-from core.fundamentals import FundamentalAnalysis
 from core.models import Signal
 from core.risk import AdaptiveRiskManager
-from core.strategies import (
-    SmartTrendStrategy, GridTradingStrategy, MeanReversionStrategy, 
-    FundingArbitrageStrategy, BasisTradeStrategy, LiquiditySweepStrategy, OrderFlowStrategy,
-    SwingRangeStrategy, SniperStrategy, WeightedSignalStrategy,
-    SpatialArbitrageStrategy,
-    EnsembleStrategy
-)
-from core.arbitrage import ArbitrageScanner
-from core.sentiment import SentimentEngine
-from core.execution import ExecutionEngine
 from core.security import SecurityManager
-from core.defi import DeFiManager
 from core.alerts import NotificationManager
-from core.feature_store import FeatureStore
-from core.compliance import ComplianceManager
-from core.auto_trader import AutoTrader
-# Keep ProfitOptimizer lightweight import or lazy load if possible.
-# But it is used in __init__. Let's import it but check if it's heavy.
-# It imports pandas and numpy. Not too heavy.
-from core.allocator import ProfitOptimizer 
 from config.settings import DEFAULT_SYMBOL, DEFAULT_TIMEFRAME
 from config.trading_config import TRADING_CONFIG
 from core.storage import StorageManager
@@ -38,6 +18,7 @@ from core.fiat.fiat_manager import FiatManager
 
 import json
 import os
+import importlib
 
 class TradingBot:
     def __init__(self, exchange_id='binance'):
@@ -48,29 +29,27 @@ class TradingBot:
         self.data_manager = DataManager(exchange_id)
         self.web3_wallet = Web3Wallet() # Web3 Integration
         
-        self.analyzer = TechnicalAnalysis()
-        self.fundamentals = FundamentalAnalysis()
-        
         # Lazy Loading for Heavy Modules
+        self._analyzer = None
+        self._fundamentals = None
         self._brain = None
         self._quantum = None
         self._portfolio_opt = None
         self._drift_detector = None
         self._ai_trainer = None
+        self._risk_manager = None
+        self._security = None
+        self._arbitrage = None
+        self._sentiment = None
+        self._execution = None
+        self._defi = None
+        self._fiat = None
+        self._notifications = None
+        self._feature_store = None
+        self._compliance = None
+        self._auto_trader = None
+        self._strategies = None
         
-        self.risk_manager = AdaptiveRiskManager(storage_manager=self.storage)
-        self.security = SecurityManager()
-        
-        # New Modules
-        self.arbitrage = ArbitrageScanner()
-        self.sentiment = SentimentEngine()
-        self.execution = ExecutionEngine(self)
-        self.defi = DeFiManager()
-        self.fiat = FiatManager(self)
-        self.notifications = NotificationManager()
-        self.feature_store = FeatureStore()
-        self.compliance = ComplianceManager(self)
-
         # --- One-time Balance Migration for User Request ---
         if self.storage.get_setting("balance_fix_applied_v2", "false") != "true":
              print("Applying One-time Balance Fix (Add 500 NGN, 0.99 USDT)...")
@@ -95,7 +74,7 @@ class TradingBot:
              self.storage.save_setting("balance_fix_applied_v2", "true")
              
              # Also update FiatManager in memory if initialized
-             if self.fiat:
+             if self._fiat:
                  self.fiat.fiat_balance = new_ngn
              print(f"Balance Fix Applied: NGN {new_ngn}, USDT {new_usdt}")
         
@@ -105,8 +84,6 @@ class TradingBot:
         self.auto_trader_timeframe = None
         self.auto_trader_amount = None
         
-        # Auto-Trading Engine (CapacityBay Logic)
-        self.auto_trader = AutoTrader(self)
         self.trading_mode = 'Demo' # Default to Demo
         self.last_trade_time = None
         self.trade_log_file = "trade_log.json"
@@ -125,25 +102,136 @@ class TradingBot:
         # Wallet State
         self.wallet_balances = [] # Stores detailed asset breakdown (List of dicts)
         
-        # Initialize Strategies
-        self.strategies = {
-            "Smart Trend": SmartTrendStrategy(self),
-            "Sniper Mode": SniperStrategy(self),
-            "Grid Trading": GridTradingStrategy(self),
-            "Mean Reversion": MeanReversionStrategy(self),
-            "Funding Arbitrage": FundingArbitrageStrategy(self),
-            "Basis Trade": BasisTradeStrategy(self),
-            "Liquidity Sweep": LiquiditySweepStrategy(self),
-            "Order Flow": OrderFlowStrategy(self),
-            "Swing Range": SwingRangeStrategy(self),
-            "Weighted Ensemble": WeightedSignalStrategy(self),
-            "Spatial Arbitrage": SpatialArbitrageStrategy(self),
-            "Ensemble Brain": EnsembleStrategy(self)
-        }
         # Default to Profit Optimizer mode: selects best strategy per regime
         self.active_strategy_name = "Profit Optimization Layer"
         # Ensure active_strategy is set for UI access even in optimizer mode
-        self.active_strategy = self.strategies.get("Smart Trend")
+        # self.active_strategy = self.strategies.get("Smart Trend") # Moved to property
+
+    @property
+    def analyzer(self):
+        if self._analyzer is None:
+            from core.analysis import TechnicalAnalysis
+            self._analyzer = TechnicalAnalysis()
+        return self._analyzer
+
+    @property
+    def fundamentals(self):
+        if self._fundamentals is None:
+            from core.fundamentals import FundamentalAnalysis
+            self._fundamentals = FundamentalAnalysis()
+        return self._fundamentals
+
+    @property
+    def risk_manager(self):
+        if self._risk_manager is None:
+            from core.risk import AdaptiveRiskManager
+            self._risk_manager = AdaptiveRiskManager(storage_manager=self.storage)
+        return self._risk_manager
+
+    @property
+    def security(self):
+        if self._security is None:
+            from core.security import SecurityManager
+            self._security = SecurityManager()
+        return self._security
+
+    @property
+    def arbitrage(self):
+        if self._arbitrage is None:
+            from core.arbitrage import ArbitrageScanner
+            self._arbitrage = ArbitrageScanner()
+        return self._arbitrage
+
+    @property
+    def sentiment(self):
+        if self._sentiment is None:
+            from core.sentiment import SentimentEngine
+            self._sentiment = SentimentEngine()
+        return self._sentiment
+
+    @property
+    def execution(self):
+        if self._execution is None:
+            from core.execution import ExecutionEngine
+            self._execution = ExecutionEngine(self)
+        return self._execution
+
+    @property
+    def defi(self):
+        if self._defi is None:
+            from core.defi import DeFiManager
+            self._defi = DeFiManager()
+        return self._defi
+
+    @property
+    def fiat(self):
+        if self._fiat is None:
+            self._fiat = FiatManager(self)
+        return self._fiat
+
+    @property
+    def notifications(self):
+        if self._notifications is None:
+            self._notifications = NotificationManager()
+        return self._notifications
+
+    @property
+    def feature_store(self):
+        if self._feature_store is None:
+            from core.feature_store import FeatureStore
+            self._feature_store = FeatureStore()
+        return self._feature_store
+
+    @property
+    def compliance(self):
+        if self._compliance is None:
+            from core.compliance import ComplianceManager
+            self._compliance = ComplianceManager(self)
+        return self._compliance
+
+    @property
+    def auto_trader(self):
+        if self._auto_trader is None:
+            from core.auto_trader import AutoTrader
+            self._auto_trader = AutoTrader(self)
+        return self._auto_trader
+
+    @property
+    def strategies(self):
+        if self._strategies is None:
+            from core.strategies import (
+                SmartTrendStrategy, GridTradingStrategy, MeanReversionStrategy, 
+                FundingArbitrageStrategy, BasisTradeStrategy, LiquiditySweepStrategy, OrderFlowStrategy,
+                SwingRangeStrategy, SniperStrategy, WeightedSignalStrategy,
+                SpatialArbitrageStrategy,
+                EnsembleStrategy
+            )
+            self._strategies = {
+                "Smart Trend": SmartTrendStrategy(self),
+                "Sniper Mode": SniperStrategy(self),
+                "Grid Trading": GridTradingStrategy(self),
+                "Mean Reversion": MeanReversionStrategy(self),
+                "Funding Arbitrage": FundingArbitrageStrategy(self),
+                "Basis Trade": BasisTradeStrategy(self),
+                "Liquidity Sweep": LiquiditySweepStrategy(self),
+                "Order Flow": OrderFlowStrategy(self),
+                "Swing Range": SwingRangeStrategy(self),
+                "Weighted Ensemble": WeightedSignalStrategy(self),
+                "Spatial Arbitrage": SpatialArbitrageStrategy(self),
+                "Ensemble Brain": EnsembleStrategy(self)
+            }
+        return self._strategies
+
+    @property
+    def active_strategy(self):
+        return self.strategies.get("Smart Trend")
+
+    @active_strategy.setter
+    def active_strategy(self, value):
+        # We don't actually store the active strategy instance on self anymore, 
+        # but we might need to support legacy code that sets it.
+        # For now, pass. The logic seems to rely on active_strategy_name
+        pass
 
     def initialize_credentials(self, username):
         """
@@ -200,18 +288,42 @@ class TradingBot:
         # 2. Web3 Withdrawal
         elif self.trading_mode == 'DEX' or (hasattr(self, 'web3_wallet') and self.web3_wallet.is_connected()):
             # Detect if Native or Token
-            if asset in ['ETH', 'BNB', 'MATIC', 'AVAX']:
+            if asset in ['ETH', 'BNB', 'MATIC', 'AVAX', 'CRO', 'FTM', 'GLMR', 'MOVR', 'ONE', 'KLAY']:
                 return self.web3_wallet.send_native(address, amount)
             else:
-                # Need Token Address - For MVP, require manual input or config lookup
-                # This is a simplification. In prod, use a Token Map.
+                # Need Token Address - Dynamic Lookup based on Chain ID
+                chain_id = str(self.web3_wallet.chain_id)
+                
+                # Multi-Chain Token Map
+                # Structure: { 'ASSET': { 'chain_id': 'address', ... } }
                 token_map = {
-                    'USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7', # ETH Mainnet
-                    # Add more dynamic lookup
+                    'USDT': {
+                        '1': '0xdAC17F958D2ee523a2206206994597C13D831ec7', # Ethereum
+                        '56': '0x55d398326f99059fF775485246999027B3197955', # BSC
+                        '137': '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', # Polygon
+                        '42161': '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', # Arbitrum
+                        '10': '0x94b008aA00579c1307B0EF2c499aD98a8ce98e48', # Optimism
+                        '43114': '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7', # Avalanche
+                    },
+                    'USDC': {
+                        '1': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', # Ethereum
+                        '56': '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', # BSC
+                        '137': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', # Polygon
+                        '42161': '0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8', # Arbitrum
+                        '10': '0x7F5c764cBc14f9669B88837ca1490cCa17c31607', # Optimism
+                        '43114': '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E', # Avalanche
+                    }
                 }
-                token_addr = token_map.get(asset)
+                
+                asset_tokens = token_map.get(asset, {})
+                token_addr = asset_tokens.get(chain_id)
+                
+                # Fallback: Check if asset is a raw address (simple heuristic)
+                if not token_addr and asset.startswith('0x') and len(asset) == 42:
+                    token_addr = asset
+                
                 if not token_addr:
-                    return {"status": "error", "message": f"Token Address for {asset} not found. Use raw address."}
+                    return {"status": "error", "message": f"Token Address for {asset} on Chain {chain_id} not found."}
                 
                 return self.web3_wallet.send_token(token_addr, address, amount)
         

@@ -65,17 +65,18 @@ neon_header = get_style_func('neon_header', fallback_header)
 card_container = get_style_func('card_container', fallback_container)
 cyberpunk_logo = get_style_func('cyberpunk_logo')
 
+# core.auth and others are needed for types/constants sometimes, but we'll check usage.
 import core.auth
 import core.data
 import core.risk
-import core.brain
-import core.strategies
-import core.bot
+# import core.brain       # Optimization: defer
+# import core.strategies  # Optimization: defer
+# import core.bot         # Optimization: defer
 import core.ui_components
 from core.auth import AuthManager, UserManager, TOTP, SessionManager
 from core.ton_wallet import TonConnectManager
 from core.web3_wallet import Web3Wallet
-from core.defi import DeFiManager
+# from core.defi import DeFiManager # Optimization: defer
 import pandas as pd
 from config.settings import APP_NAME, VERSION, DEFAULT_SYMBOL
 
@@ -169,6 +170,9 @@ if 'sound_queue' not in st.session_state:
 
 # --- Helper Functions ---
 def get_bot(exchange_id):
+    # Optimization: Lazy import to speed up startup
+    from core.bot import TradingBot
+    
     session_key = f"bot_{exchange_id}_{SESSION_VERSION_KEY}"
     if session_key not in st.session_state:
         st.session_state[session_key] = TradingBot(exchange_id)
@@ -405,35 +409,21 @@ import core.strategies
 import core.bot
 
 SESSION_VERSION_KEY = "v25" 
-if 'loaded_core_version' not in st.session_state or st.session_state.loaded_core_version != SESSION_VERSION_KEY:
-    try:
-        importlib.reload(core.data)
-        importlib.reload(core.risk)
-        importlib.reload(core.brain)
-        importlib.reload(core.strategies)
-        importlib.reload(core.bot)
-        import core.ui_components
-        importlib.reload(core.ui_components)
-        from core.ui_components import render_top_nav, render_sidebar_menu
-        st.session_state.loaded_core_version = SESSION_VERSION_KEY
-    except Exception as e:
-        st.error(f"Error reloading core modules: {e}")
+# Optimization: Disabled heavy reload logic for faster startup
+if 'loaded_core_version' not in st.session_state:
+    st.session_state.loaded_core_version = SESSION_VERSION_KEY
 
-from core.bot import TradingBot
-from core.defi import DeFiManager
-from core.auto_trader import AutoTrader
-from core.copy_trading import CopyTradingModule
-from core.nlp_engine import NLPEngine
-from core.sound_engine import SoundEngine
-from core.trade_replay import TradeReplay
-from core.chaos import ChaosMonkey
-from core.transparency import TransparencyLog, OracleManager
-from core.arbitrage import ArbitrageScanner
-from core.quantum import QuantumEngine
+# Lazy imports implemented to reduce initial load time
+# from core.bot import TradingBot -> Moved to get_bot
+# from core.defi import DeFiManager -> Moved to usage
+# from core.auto_trader import AutoTrader -> Moved to usage
+# ...
 
 if 'sound_engine' not in st.session_state:
+    from core.sound_engine import SoundEngine
     st.session_state.sound_engine = SoundEngine()
 if 'trade_replay' not in st.session_state:
+    from core.trade_replay import TradeReplay
     st.session_state.trade_replay = TradeReplay()
 
 # --- Top Navigation ---
@@ -1898,40 +1888,79 @@ elif page_nav == "Wallet & Execution":
     
     with tab_trans:
         st.markdown("#### Transfer Assets to External Wallet")
-        if not st.session_state.defi_manager.address:
-            st.warning("⚠️ Private Key not loaded. Transfers disabled.")
-        else:
-            with st.expander("Native Transfer"):
-                to = st.text_input("Recipient Address (0x...)", key="native_to")
-                amt = st.number_input("Amount (native token)", min_value=0.0, step=0.0001, key="native_amt")
-                if st.session_state.defi_manager.current_chain != 'ton':
-                    gas_params = st.session_state.defi_manager.estimate_gas_params(nc)
-                    if "gasPrice" in gas_params:
-                        st.caption(f"Legacy gas price: {st.session_state.defi_manager.w3.from_wei(gas_params['gasPrice'], 'gwei')} gwei")
-                    else:
-                        st.caption(f"MaxFeePerGas: {st.session_state.defi_manager.w3.from_wei(gas_params['maxFeePerGas'], 'gwei')} gwei | Priority: {st.session_state.defi_manager.w3.from_wei(gas_params['maxPriorityFeePerGas'], 'gwei')} gwei")
-                else:
-                    st.caption("Gas fees handled automatically by TON network.")
-                if st.button("Send Native Transfer"):
-                    res = st.session_state.defi_manager.transfer_native(nc, to, amt)
-                    (st.success if res.startswith("✅") else st.error)(res)
+        
+        # Unified Withdrawal Interface (CEX & Web3)
+        mode = st.session_state.get('trading_mode', 'Demo')
+        is_cex = mode in ['CEX_Direct', 'CEX_Proxy'] or (mode == 'Live' and st.session_state.get('exchange_connected'))
+        
+        if is_cex:
+            st.info(f"📤 Withdraw from {bot.exchange_id.upper()} (CEX)")
+            with st.form("cex_withdraw_form"):
+                cw1, cw2 = st.columns(2)
+                with cw1:
+                    wd_asset = st.selectbox("Asset", ["USDT", "BTC", "ETH", "SOL", "BNB", "USDC", "XRP"])
+                    wd_net = st.text_input("Network (e.g. TRC20, ERC20)", value="TRC20")
+                with cw2:
+                    wd_addr = st.text_input("Recipient Address")
+                    wd_amt = st.number_input("Amount", min_value=0.0, step=1.0)
+                
+                submitted = st.form_submit_button("Initiate CEX Withdrawal")
+                if submitted:
+                    with st.spinner("Processing CEX Withdrawal..."):
+                        res = bot.withdraw_crypto(wd_asset, wd_amt, wd_addr, network=wd_net)
+                        if res.get('status') == 'success':
+                            st.success(f"✅ Withdrawal Initiated: {res.get('message')}")
+                            if 'tx_id' in res:
+                                st.code(res['tx_id'], language="text")
+                        else:
+                            st.error(f"❌ Failed: {res.get('message')}")
 
-            token_label = "Jetton Address" if st.session_state.defi_manager.current_chain == 'ton' else "Token Contract (0x...)"
-            section_label = "Jetton Transfer" if st.session_state.defi_manager.current_chain == 'ton' else "ERC-20 Transfer"
+        else:
+            # Web3 / DeFi Withdrawal
+            st.info(f"📤 Withdraw from Web3 Wallet ({st.session_state.defi_manager.current_chain.upper()})")
             
-            with st.expander(section_label):
-                token = st.text_input(token_label, key="erc20_token")
-                to2 = st.text_input("Recipient Address", key="erc20_to")
-                amt2 = st.number_input("Amount (tokens)", min_value=0.0, step=0.0001, key="erc20_amt")
-                if token:
-                    try:
-                        bal_token = st.session_state.defi_manager.erc20_balance(nc, token)
-                        st.caption(f"Your token balance: {bal_token}")
-                    except Exception as e:
-                        st.caption(f"Balance check error: {e}")
-                if st.button(f"Send {section_label}"):
-                    res2 = st.session_state.defi_manager.transfer_erc20(nc, token, to2, amt2)
-                    (st.success if res2.startswith("✅") else st.error)(res2)
+            if not st.session_state.defi_manager.address:
+                st.warning("⚠️ Private Key not loaded. Transfers disabled.")
+            else:
+                with st.expander("Native Transfer (e.g. ETH, BNB, SOL)"):
+                    to = st.text_input("Recipient Address (0x...)", key="native_to")
+                    amt = st.number_input("Amount (native token)", min_value=0.0, step=0.0001, key="native_amt")
+                    if st.session_state.defi_manager.current_chain != 'ton':
+                        gas_params = st.session_state.defi_manager.estimate_gas_params(nc)
+                        if "gasPrice" in gas_params:
+                            st.caption(f"Legacy gas price: {st.session_state.defi_manager.w3.from_wei(gas_params['gasPrice'], 'gwei')} gwei")
+                        else:
+                            st.caption(f"MaxFeePerGas: {st.session_state.defi_manager.w3.from_wei(gas_params['maxFeePerGas'], 'gwei')} gwei")
+                    
+                    if st.button("Send Native Transfer"):
+                        # Use bot wrapper if available for consistency, else direct
+                        if hasattr(bot, 'withdraw_crypto') and bot.trading_mode == 'DEX':
+                             # Map symbol based on chain? 
+                             # Simpler to use defi_manager directly here for granular control
+                             res = st.session_state.defi_manager.transfer_native(nc, to, amt)
+                             (st.success if res.startswith("✅") else st.error)(res)
+                        else:
+                             res = st.session_state.defi_manager.transfer_native(nc, to, amt)
+                             (st.success if res.startswith("✅") else st.error)(res)
+
+                token_label = "Jetton Address" if st.session_state.defi_manager.current_chain == 'ton' else "Token Contract (0x...)"
+                section_label = "Jetton Transfer" if st.session_state.defi_manager.current_chain == 'ton' else "ERC-20 Transfer"
+                
+                with st.expander(section_label):
+                    token = st.text_input(token_label, key="erc20_token")
+                    to2 = st.text_input("Recipient Address", key="erc20_to")
+                    amt2 = st.number_input("Amount (tokens)", min_value=0.0, step=0.0001, key="erc20_amt")
+                    
+                    if token:
+                        try:
+                            bal_token = st.session_state.defi_manager.erc20_balance(nc, token)
+                            st.caption(f"Your token balance: {bal_token}")
+                        except Exception as e:
+                            st.caption(f"Balance check error: {e}")
+                            
+                    if st.button(f"Send {section_label}"):
+                        res2 = st.session_state.defi_manager.transfer_erc20(nc, token, to2, amt2)
+                        (st.success if res2.startswith("✅") else st.error)(res2)
 
     with tab_dep:
         st.markdown("#### Deposit Crypto")
@@ -2924,6 +2953,7 @@ elif page_nav in ["Arbitrage Scanner", "Copy Trading", "DeFi Bridge", "Quantum L
         st.session_state.bot = bot
         
         if 'copy_mod' not in st.session_state:
+            from core.copy_trading import CopyTradingModule
             st.session_state.copy_mod = CopyTradingModule()
         st.session_state.copy_mod.render_ui()
     elif page_nav == "DeFi Bridge":
@@ -2941,8 +2971,10 @@ elif page_nav in ["Arbitrage Scanner", "Copy Trading", "DeFi Bridge", "Quantum L
             res = st.session_state.defi_mgr.bridge_assets(tgt, amt)
             st.success(f"{res.get('status', 'pending')} | tx: {res.get('tx_hash', '')}")
     elif page_nav == "Quantum Lab":
-        qe = st.session_state.get('quantum_engine') or QuantumEngine()
-        st.session_state.quantum_engine = qe
+        if 'quantum_engine' not in st.session_state:
+            from core.quantum import QuantumEngine
+            st.session_state.quantum_engine = QuantumEngine()
+        qe = st.session_state.quantum_engine
         bot = get_bot(exchange)
         df = get_cached_ohlcv(bot, st.session_state.get('symbol','BTC/USDT'), st.session_state.get('timeframe','1h'))
         regime = qe.detect_regime_quantum(df) if isinstance(df, pd.DataFrame) else "Normal"

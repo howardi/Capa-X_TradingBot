@@ -22,12 +22,19 @@ if (-not $AUTH_LIST) {
 
 # 1. Auto-detect Project ID
 Write-Host "🔍 Detecting Google Cloud Project..." -ForegroundColor Yellow
-$PROJECT_ID = gcloud config get-value project 2>$null
+$PROJECT_ID = ""
+$raw_project = gcloud config get-value project 2>$null
+if (-not [string]::IsNullOrWhiteSpace($raw_project)) {
+    $PROJECT_ID = $raw_project.Trim()
+}
 
 # Hardcode fallback if unset or empty
 if ([string]::IsNullOrWhiteSpace($PROJECT_ID) -or $PROJECT_ID -eq '(unset)') {
     $PROJECT_ID = "caparox-bot"
 }
+
+# Ensure no trailing spaces/newlines
+$PROJECT_ID = $PROJECT_ID.Trim()
 
 
 
