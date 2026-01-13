@@ -1,44 +1,31 @@
-# Stage 1: Build React Frontend
-FROM node:20-slim as frontend-builder
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
-COPY frontend/ .
-RUN npm run build
-
-# Stage 2: Python Backend
+# Use an official Python runtime as a parent image
 FROM python:3.10-slim
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
+# Copy the current directory contents into the container at /app
+COPY . /app
+
+# Install system dependencies (needed for some python packages like psycopg2)
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
+    gcc \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
+# Install any needed packages specified in requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-# Note: ./vendor/pandas_ta must be present in the build context
-COPY vendor/ ./vendor/
-RUN pip3 install -r requirements.txt
-RUN pip3 install gunicorn flask
+# Make port 5000 available to the world outside this container
+EXPOSE 5000
 
-# Copy the rest of the application code
-COPY . .
-
-# Copy built frontend from Stage 1
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
-
-# Expose the port
-EXPOSE 8080
-
-# Environment variables
-ENV PORT=8080
+# Define environment variable
+ENV FLASK_APP=api/index.py
 ENV PYTHONUNBUFFERED=1
 
-# Command to run the application (Flask via Gunicorn)
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "api.index:app"]
+# Copy start script and make executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Run start script when the container launches
+CMD ["/app/start.sh"]

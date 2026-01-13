@@ -3,3 +3,12 @@ requests==2.31.0
 ccxt==3.1.58
 python-dotenv==1.0.0
 gunicorn==21.2.0
+firebase-admin>=6.2.0
+web3>=6.0.0
+waitress
+pandas
+pandas-ta
+numpy>=1.24.0
+websocket-client
+pyjwt
+cryptography

@@ -81,21 +81,61 @@ class SmartTrendStrategy(Strategy):
         # 3. Market Regime
         regime_data = self.bot.brain.detect_market_regime(df)
         
-        # 4. Construct Signal
-        if signal_data['type'] in ['buy', 'sell']:
+        # 4. Fundamental Analysis (New Layer)
+        fund_data = self.bot.fundamentals.analyze_fundamentals(symbol)
+        
+        # 4.5 Sentiment Analysis (New Layer)
+        sent_data = self.bot.sentiment.analyze_sentiment(symbol)
+        
+        # Combine Scores
+        # Technical Score: signal_data['score'] (approx -10 to 10)
+        # Fundamental Score: fund_data['score'] (approx -4 to 4)
+        # Sentiment Score: sent_data['score'] (0-100) -> Normalize to -2 to +2
+        
+        tech_score = signal_data.get('score', 0)
+        fund_score = fund_data.get('score', 0)
+        
+        sent_score = 0
+        s_val = sent_data.get('score', 50)
+        if s_val > 60: sent_score = 1
+        if s_val > 80: sent_score = 2
+        if s_val < 40: sent_score = -1
+        if s_val < 20: sent_score = -2
+        
+        total_score = tech_score + fund_score + sent_score
+        
+        # Adjust confidence based on alignment
+        confidence = signal_data.get('score', 0) / 10 # Base confidence
+        
+        # Boost confidence if FA or Sentiment confirms TA
+        if (tech_score > 0 and (fund_score > 0 or sent_score > 0)):
+            confidence += 0.15 
+        elif (tech_score < 0 and (fund_score < 0 or sent_score < 0)):
+            confidence += 0.15
+            
+        # 5. Construct Signal
+        if signal_data['type'] in ['buy', 'sell', 'strong_buy', 'strong_sell']:
+             
+             # Enrich reasons with Fundamental data and Sentiment
+             combined_reasons = signal_data.get('reason', '')
+             if fund_data['reasons']:
+                 combined_reasons += " | FA: " + ", ".join(fund_data['reasons'])
+             if sent_data.get('classification') != 'Neutral':
+                 combined_reasons += f" | Sentiment: {sent_data['classification']}"
+             
              decision_packet = {
                 'decision': 'EXECUTE',
-                'confidence': signal_data.get('score', 0)/10,
+                'confidence': min(max(confidence, 0.1), 1.0), # Clamp 0.1-1.0
                 'market_regime': regime_data['type'],
                 'rejection_reason': '',
                 "symbol": symbol,
-                "bias": signal_data['type'].upper(),
+                "bias": signal_data['type'].replace('strong_', '').upper(), # Normalize to BUY/SELL
                 "strategy": self.name,
                 "entry": df['close'].iloc[-1],
                 "stop_loss": 0, # Should be calculated by risk manager
                 "take_profit": 0,
                 "risk_percent": 1.0,
-                "execution_score": 1.0
+                "execution_score": total_score
              }
              
              # Apply Risk Management
@@ -108,9 +148,9 @@ class SmartTrendStrategy(Strategy):
                 type=signal_data['type'],
                 price=df['close'].iloc[-1],
                 timestamp=pd.Timestamp.now(),
-                reason=signal_data['reason'],
+                reason=combined_reasons,
                 indicators=signal_data['indicators'],
-                score=signal_data.get('score', 0),
+                score=total_score,
                 regime=regime_data['type'],
                 liquidity_status='Normal',
                 confidence=decision_packet['confidence'],

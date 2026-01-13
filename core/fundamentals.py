@@ -217,3 +217,71 @@ class FundamentalAnalysis:
                 return data['data'][0]
         except:
             return {'value': 50, 'value_classification': 'Neutral'}
+
+    def analyze_fundamentals(self, symbol: str) -> dict:
+        """
+        Analyze fundamental metrics to generate a directional bias/score.
+        Returns a dictionary with score (-10 to +10), status, and reasons.
+        """
+        score = 0
+        reasons = []
+        
+        # 1. Market Sentiment (Fear & Greed)
+        sentiment = self.get_market_sentiment()
+        try:
+            fng_value = int(sentiment.get('value', 50))
+            
+            # Contrarian Strategy for Crypto
+            # Extreme Fear (<20) -> Potential Bottom -> Bullish
+            # Extreme Greed (>80) -> Potential Top -> Bearish
+            if fng_value < 20:
+                score += 2
+                reasons.append(f"Extreme Fear ({fng_value}) - Contrarian Buy")
+            elif fng_value < 40:
+                score += 1
+                reasons.append(f"Fear ({fng_value}) - Potential Buy")
+            elif fng_value > 80:
+                score -= 2
+                reasons.append(f"Extreme Greed ({fng_value}) - Potential Top")
+            elif fng_value > 60:
+                score -= 1
+                reasons.append(f"Greed ({fng_value}) - Caution")
+        except: pass
+        
+        # 2. Asset Specifics (Volume, Market Cap)
+        details = self.get_asset_details(symbol)
+        if details:
+            # Volume Analysis (if 24h change is available)
+            vol_change = details.get('volume_change_24h', 0)
+            if vol_change:
+                if vol_change > 50: # Volume spike > 50%
+                    # High volume often precedes volatility; direction depends on price action
+                    # Here we treat it as "Interest"
+                    reasons.append(f"High Volume Spike (+{vol_change}%)")
+                    # Slight bullish bias for attention
+                    score += 0.5 
+            
+            # Rank Analysis
+            rank = details.get('rank', 0)
+            if rank > 0 and rank <= 10:
+                # Blue chip, generally safer
+                reasons.append(f"Top 10 Asset (Rank #{rank})")
+            elif rank > 100:
+                reasons.append(f"Low Cap Asset (Rank #{rank}) - High Risk")
+                
+            # Market Dominance (only for BTC usually, but useful context)
+            dom = details.get('market_dominance', 0)
+            if 'BTC' in symbol and dom > 50:
+                reasons.append(f"High BTC Dominance ({dom}%)")
+
+        # Normalize status
+        status = 'Neutral'
+        if score >= 2: status = 'Bullish'
+        elif score <= -2: status = 'Bearish'
+        
+        return {
+            'score': score,
+            'status': status,
+            'reasons': reasons,
+            'details': details
+        }
